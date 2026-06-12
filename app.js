@@ -1,6 +1,6 @@
 
 "use strict";
-const BUILD_VERSION = "v0.0.19-alpha";
+const BUILD_VERSION = "v0.0.22-alpha";
 const BUILD_DATE = "2026-06-12";
 
 function reportFatalError(error) {
@@ -983,7 +983,7 @@ function incomingFreshmanPaper() {
     rare: [
       {
         name: "Coach's Binder",
-        note: "The current depth chart is a staff guess. Open player cards, move kids around, or leave it for later."
+        note: "The current depth chart is a remaining empty spots. Open player cards, move kids around, or leave it for later."
       }
     ],
     injuries: [],
@@ -1104,6 +1104,7 @@ function formatStatKey(key) {
     rushYards: "Rush Yds",
     rushTD: "Rush TD",
     recYards: "Rec Yds",
+    recTD: "Rec TD",
     catches: "Rec",
     tackles: "Tackles",
     sacks: "Sacks",
@@ -1265,7 +1266,261 @@ function depthOptionLabel(player, position) {
   return positionLabelForDropdown(player, position);
 }
 
-function advanceWeek() {
+
+let watchedGameEvents = [];
+let watchTimer = null;
+let watchIndex = 0;
+let pendingWatchedAdvance = false;
+
+function canWatchThisWeek() {
+  return game && (game.phase === "regular" || game.phase === "playoffs") && currentWeekHasStroudGame();
+}
+
+function watchGame() {
+  if (!canWatchThisWeek()) {
+    toast("No Stroud game to watch this week.");
+    return;
+  }
+
+  const missing = validateDepthChartForGame();
+  if (missing.length) {
+    showDepthChartWarning(missing);
+    return;
+  }
+
+  watchedGameEvents = buildWatchedGameEvents();
+  watchIndex = 0;
+  pendingWatchedAdvance = true;
+  openWatchGameOverlay();
+  renderWatchFrame();
+  watchTimer = setInterval(playNextWatchEvent, 850);
+}
+
+function closeWatchGameOverlay() {
+  clearInterval(watchTimer);
+  watchTimer = null;
+  document.getElementById("watchGameOverlay")?.classList.add("hidden");
+}
+
+function skipWatchedGame() {
+  clearInterval(watchTimer);
+  watchTimer = null;
+  finishWatchedGame();
+}
+
+function finishWatchedGame() {
+  closeWatchGameOverlay();
+  if (pendingWatchedAdvance) {
+    pendingWatchedAdvance = false;
+    advanceWeek(true);
+  }
+}
+
+function openWatchGameOverlay() {
+  const panel = document.getElementById("watchGamePanel");
+  panel.innerHTML = `
+    <div class="watch-head">
+      <div>
+        <div class="watch-title">Friday Night Live</div>
+        <div class="muted small">Drive-by-drive game viewer</div>
+      </div>
+      <div class="watch-controls">
+        <button id="watchSkipBtn" class="secondary">Skip to Final</button>
+        <button id="watchCloseBtn" class="secondary">Close</button>
+      </div>
+    </div>
+    <div class="watch-body" id="watchBody"></div>
+  `;
+  document.getElementById("watchGameOverlay").classList.remove("hidden");
+  document.getElementById("watchSkipBtn").addEventListener("click", skipWatchedGame);
+  document.getElementById("watchCloseBtn").addEventListener("click", closeWatchGameOverlay);
+}
+
+function playNextWatchEvent() {
+  if (watchIndex < watchedGameEvents.length - 1) {
+    watchIndex++;
+    renderWatchFrame();
+  } else {
+    clearInterval(watchTimer);
+    watchTimer = null;
+    renderWatchFrame(true);
+  }
+}
+
+function renderWatchFrame(done = false) {
+  const body = document.getElementById("watchBody");
+  if (!body) return;
+
+  const event = watchedGameEvents[watchIndex] || watchedGameEvents[0];
+  const visible = watchedGameEvents.slice(Math.max(0, watchIndex - 10), watchIndex + 1).reverse();
+  const homeTeam = getTeam(event.homeId);
+  const awayTeam = getTeam(event.awayId);
+
+  body.innerHTML = `
+    <div class="watch-scoreboard">
+      <div class="watch-team">${escapeHtml(homeTeam.name)}<br><span class="watch-score">${event.homeScore}</span></div>
+      <div class="watch-clock">
+        <strong>${escapeHtml(event.quarter)}</strong><br>
+        ${escapeHtml(event.clock)}<br>
+        ${escapeHtml(event.downText)}
+      </div>
+      <div class="watch-team away">${escapeHtml(awayTeam.name)}<br><span class="watch-score">${event.awayScore}</span></div>
+    </div>
+
+    <div class="watch-field">
+      <div class="watch-yard-labels"><span>0</span><span>20</span><span>40</span><span>50</span><span>40</span><span>20</span><span>0</span></div>
+      <div class="watch-ball" style="left:${event.fieldPct}%"></div>
+    </div>
+
+    <div class="watch-drive">
+      <div class="watch-card">
+        <div class="watch-play-main ${event.big ? "watch-big" : ""}">${escapeHtml(event.title)}</div>
+        <div class="watch-play-sub">${escapeHtml(event.text)}</div>
+        ${done ? `
+          <div class="watch-final-actions">
+            <button id="finishWatchBtn" class="gold">Continue to Final</button>
+            <button id="viewCurrentPaperBtn" class="secondary">Skip Paper</button>
+          </div>
+        ` : ""}
+      </div>
+      <div class="watch-card watch-log">
+        ${visible.map(item => `
+          <div class="watch-log-line">
+            <strong>${escapeHtml(item.quarter)} ${escapeHtml(item.clock)}</strong><br>
+            ${item.big ? "<span class='watch-big'>★ </span>" : ""}${escapeHtml(item.title)}
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  `;
+
+  document.getElementById("finishWatchBtn")?.addEventListener("click", finishWatchedGame);
+  document.getElementById("viewCurrentPaperBtn")?.addEventListener("click", closeWatchGameOverlay);
+}
+
+function buildWatchedGameEvents() {
+  const scheduledGame = getCurrentStroudGameForWatch();
+  const home = getTeam(scheduledGame.homeId);
+  const away = getTeam(scheduledGame.awayId);
+  const stroudIsHome = scheduledGame.homeId === "team_stroud";
+  const stroud = getTeam("team_stroud");
+  const opponent = stroudIsHome ? away : home;
+
+  const stroudEdge = (stroud.power - opponent.power) / 18;
+  const events = [];
+  let homeScore = 0;
+  let awayScore = 0;
+  let yard = 25;
+  let possession = Math.random() < 0.5 ? scheduledGame.homeId : scheduledGame.awayId;
+
+  function pushEvent(q, clock, title, text, big = false) {
+    events.push({
+      homeId: scheduledGame.homeId,
+      awayId: scheduledGame.awayId,
+      homeScore,
+      awayScore,
+      quarter: `Q${q}`,
+      clock,
+      downText: `${getTeam(possession).name} ball • ${yardLabel(yard)}`,
+      fieldPct: clamp(yard, 2, 98),
+      title,
+      text,
+      big
+    });
+  }
+
+  pushEvent(1, "12:00", "Kickoff", `${home.name} and ${away.name} are underway under the lights.`);
+
+  for (let q = 1; q <= 4; q++) {
+    for (let drive = 0; drive < 4; drive++) {
+      const clock = `${String(rand(1, 11)).padStart(2, "0")}:${String(rand(0, 59)).padStart(2, "0")}`;
+      const offenseIsStroud = possession === "team_stroud";
+      const edge = offenseIsStroud ? stroudEdge : -stroudEdge;
+      const driveQuality = rand(-18, 18) + edge * 10;
+      const startYard = rand(18, 36);
+      yard = possession === scheduledGame.homeId ? startYard : 100 - startYard;
+
+      const playName = offenseIsStroud ? stroudPlayName() : opponentPlayName(opponent);
+      const gained = clamp(Math.round(25 + driveQuality + rand(-12, 28)), -5, 76);
+      const turnover = Math.random() < (driveQuality < -8 ? 0.18 : 0.08);
+      const scoreChance = gained > 52 || driveQuality > 20 || Math.random() < 0.16 + edge * 0.05;
+
+      if (turnover) {
+        const defender = choice(DEFENSE_POSITIONS.map(pos => getPlayer(game.depth.defense[pos]?.[0])).filter(Boolean));
+        pushEvent(q, clock, "Turnover!", offenseIsStroud
+          ? `${opponent.name} forces a takeaway and flips the field.`
+          : `${defender?.name || "The Tigers defense"} comes up with a huge takeaway.`, true);
+        possession = possession === scheduledGame.homeId ? scheduledGame.awayId : scheduledGame.homeId;
+        continue;
+      }
+
+      yard = possession === scheduledGame.homeId ? clamp(yard + gained, 1, 99) : clamp(yard - gained, 1, 99);
+
+      if (scoreChance) {
+        const td = Math.random() < 0.78;
+        const points = td ? 7 : 3;
+        if (possession === scheduledGame.homeId) homeScore += points;
+        else awayScore += points;
+        pushEvent(q, clock, td ? "Touchdown!" : "Field Goal", `${playName} finishes the drive for ${points} points.`, true);
+      } else if (gained > 28) {
+        pushEvent(q, clock, "Big Gain", `${playName} breaks loose for ${gained} yards and changes field position.`, true);
+      } else if (gained > 8) {
+        pushEvent(q, clock, "First Down", `${playName} keeps the chains moving.`);
+      } else {
+        pushEvent(q, clock, "Drive Stalls", `${getTeam(possession).name} cannot finish the drive and punts it away.`);
+      }
+
+      possession = possession === scheduledGame.homeId ? scheduledGame.awayId : scheduledGame.homeId;
+    }
+  }
+
+  pushEvent(4, "0:00", "Final Whistle", "The last seconds run off. Time to check the final report.", true);
+  return events;
+}
+
+function getCurrentStroudGameForWatch() {
+  if (game.phase === "regular") {
+    return game.schedule.find(item => item.week === game.week && !item.played && (item.homeId === "team_stroud" || item.awayId === "team_stroud"));
+  }
+  return game.playoffBracket.find(item => !item.played && (item.homeId === "team_stroud" || item.awayId === "team_stroud"));
+}
+
+function yardLabel(yard) {
+  if (yard === 50) return "midfield";
+  if (yard < 50) return `own ${yard}`;
+  return `opp ${100 - yard}`;
+}
+
+function stroudPlayName() {
+  const offense = game.settings.offense;
+  const qb = getPlayer(game.depth.offense.QB?.[0]);
+  const rb = getPlayer(game.depth.offense.RB?.[0]);
+  const fb = getPlayer(game.depth.offense.FB?.[0]);
+  const wr = choice(["WR1", "WR2", "WR3", "TE"].map(pos => getPlayer(game.depth.offense[pos]?.[0])).filter(Boolean));
+  if (["Wing-T", "Power-I", "Wishbone", "Flexbone", "Option"].includes(offense)) {
+    return choice([
+      `${fb?.name || "The fullback"} pounds inside`,
+      `${rb?.name || "The tailback"} hits the edge`,
+      `${qb?.name || "The quarterback"} sells the fake and keeps it`
+    ]);
+  }
+  return choice([
+    `${qb?.name || "The quarterback"} finds ${wr?.name || "a receiver"}`,
+    `${rb?.name || "The back"} slips through the second level`,
+    `${wr?.name || "A receiver"} wins outside`
+  ]);
+}
+
+function opponentPlayName(opponent) {
+  return choice([
+    `${opponent.name} attacks the edge`,
+    `${opponent.name} hits a quick pass`,
+    `${opponent.name} leans on the run game`,
+    `${opponent.name} catches Stroud in a bad angle`
+  ]);
+}
+
+function advanceWeek(fromWatchedGame = false) {
   if (!game) {
     createNewDynastyIntro();
     return;
@@ -1622,6 +1877,57 @@ function addLineIfMeaningful(lines, player, stats) {
   if (Object.keys(clean).length) addGameStatLine(lines, player, clean);
 }
 
+
+function addToMap(map, key, value) {
+  if (!key) return;
+  map[key] = (map[key] || 0) + Math.round(value || 0);
+}
+
+function boundedShares(total, weightedIds, maxEach = 999) {
+  const entries = weightedIds.filter(item => item.id && item.weight > 0);
+  const output = {};
+  if (!entries.length || total <= 0) return output;
+
+  const weightTotal = entries.reduce((sum, item) => sum + item.weight, 0);
+  let remaining = Math.round(total);
+
+  for (const item of entries) {
+    const amount = Math.min(maxEach, Math.floor(total * item.weight / weightTotal));
+    output[item.id] = amount;
+    remaining -= amount;
+  }
+
+  let guard = 0;
+  while (remaining > 0 && guard < 2000) {
+    guard++;
+    const item = choice(entries);
+    if ((output[item.id] || 0) < maxEach) {
+      output[item.id] = (output[item.id] || 0) + 1;
+      remaining--;
+    } else if (entries.every(entry => (output[entry.id] || 0) >= maxEach)) {
+      break;
+    }
+  }
+
+  return output;
+}
+
+function sumValues(obj) {
+  return Object.values(obj || {}).reduce((sum, value) => sum + Math.round(value || 0), 0);
+}
+
+function chooseWeighted(entries) {
+  const clean = entries.filter(item => item.id && item.weight > 0);
+  if (!clean.length) return null;
+  const total = clean.reduce((sum, item) => sum + item.weight, 0);
+  let roll = Math.random() * total;
+  for (const item of clean) {
+    roll -= item.weight;
+    if (roll <= 0) return item.id;
+  }
+  return clean[clean.length - 1].id;
+}
+
 function rushingSharesForScheme() {
   const scheme = game.settings.offense;
   if (scheme === "Wing-T") return { qb: 0.08, rb: 0.28, fb: 0.34, wr: 0.10, other: 0.20 };
@@ -1634,136 +1940,134 @@ function rushingSharesForScheme() {
 
 function applyStroudStats(scheduledGame, participation) {
   const stroudIsHome = scheduledGame.homeId === "team_stroud";
-  const teamStats = stroudIsHome ? scheduledGame.stats.home : scheduledGame.stats.away;
+  const sideKey = stroudIsHome ? "home" : "away";
+  const teamStats = scheduledGame.stats[sideKey];
   const opponentScore = stroudIsHome ? scheduledGame.awayScore : scheduledGame.homeScore;
   const myScore = stroudIsHome ? scheduledGame.homeScore : scheduledGame.awayScore;
 
   const firstDepth = participation[0];
-  const ids = offensivePlayerIdsFromDepth(firstDepth);
+  const offense = firstDepth.offense;
   const defense = firstDepth.defense;
   const quarterShare = playerQuarterShares(participation);
   const gameLines = [];
 
-  const qb = getPlayer(ids.qb);
-  const rb = getPlayer(ids.rb);
-  const fb = getPlayer(ids.fb);
-  const wr1 = getPlayer(ids.wr1);
-  const wr2 = getPlayer(ids.wr2);
-  const wr3 = getPlayer(ids.wr3);
-  const te = getPlayer(ids.te);
-  const receivers = [wr1, wr2, wr3, te].filter(Boolean);
-  const defenders = DEFENSE_POSITIONS.map(pos => getPlayer(defense[pos][0])).filter(Boolean);
+  const qb = getPlayer(offense.QB?.[0]);
+  const rb = getPlayer(offense.RB?.[0]);
+  const fb = getPlayer(offense.FB?.[0]);
+  const wr1 = getPlayer(offense.WR1?.[0]);
+  const wr2 = getPlayer(offense.WR2?.[0]);
+  const wr3 = getPlayer(offense.WR3?.[0]);
+  const te = getPlayer(offense.TE?.[0]);
+  const receivers = [wr1, wr2, wr3, te, rb, fb].filter(Boolean);
+  const defenders = DEFENSE_POSITIONS.map(pos => getPlayer(defense[pos]?.[0])).filter(Boolean);
 
-  // Passing: keep HS stat lines sane.
+  const lineStats = {};
+
+  function addPlayerLine(player, stats) {
+    if (!player) return;
+    if (!lineStats[player.id]) lineStats[player.id] = { player: player.name, grade: player.grade, stats: {} };
+    for (const [key, value] of Object.entries(stats)) {
+      const cleanValue = Math.round(value || 0);
+      if (cleanValue !== 0) {
+        lineStats[player.id].stats[key] = (lineStats[player.id].stats[key] || 0) + cleanValue;
+      }
+    }
+  }
+
+  // QB passing is exactly team passing. No more mismatch.
   if (qb) {
-    const share = quarterShare[qb.id] || 1;
-    const passYards = scaledStat(teamStats.passYards, share);
-    const passTD = scaledStat(teamStats.passTD, share);
-    const qbRush = scaledStat(teamStats.rushYards * rushingSharesForScheme().qb, share);
-
+    const passYards = Math.round(teamStats.passYards);
+    const passTD = Math.round(teamStats.passTD);
     addStats(qb, {
       games: 1,
       passYards,
       passTD,
-      intThrown: teamStats.turnovers ? rand(0, Math.min(2, teamStats.turnovers)) : 0,
-      rushYards: qbRush,
-      rushTD: Math.random() < 0.15 ? 1 : 0
+      intThrown: teamStats.turnovers ? rand(0, Math.min(2, teamStats.turnovers)) : 0
     });
-
-    addLineIfMeaningful(gameLines, qb, { passYards, passTD, rushYards: qbRush });
+    addPlayerLine(qb, { passYards, passTD });
   }
 
-  // Rushing distribution must never exceed team rushing.
-  const rushShare = rushingSharesForScheme();
-  const rushingWeights = {};
-  if (rb) rushingWeights[rb.id] = rushShare.rb;
-  if (fb) rushingWeights[fb.id] = rushShare.fb;
-  if (qb) rushingWeights[qb.id] = rushShare.qb;
-  if (wr1) rushingWeights[wr1.id] = rushShare.wr / 2;
-  if (wr2) rushingWeights[wr2.id] = rushShare.wr / 2;
-
-  const rushYardsById = distributeInteger(teamStats.rushYards, rushingWeights, 240);
-  const rushTDById = distributeInteger(teamStats.rushTD, rushingWeights, 5);
+  // Rushing distribution sums exactly to team rushing.
+  const shares = rushingSharesForScheme();
+  const rushWeights = [
+    { id: rb?.id, weight: shares.rb || 0 },
+    { id: fb?.id, weight: shares.fb || 0 },
+    { id: qb?.id, weight: shares.qb || 0 },
+    { id: wr1?.id, weight: (shares.wr || 0) / 2 },
+    { id: wr2?.id, weight: (shares.wr || 0) / 2 }
+  ];
+  const rushYardsById = boundedShares(teamStats.rushYards, rushWeights, 260);
+  const rushTdById = {};
+  for (let i = 0; i < teamStats.rushTD; i++) {
+    const scorerId = chooseWeighted(rushWeights.filter(item => (rushYardsById[item.id] || 0) >= 1));
+    if (scorerId) rushTdById[scorerId] = (rushTdById[scorerId] || 0) + 1;
+  }
 
   for (const [playerId, yards] of Object.entries(rushYardsById)) {
-    const player = getPlayer(playerId);
-    if (!player || player === qb) continue;
-    const tds = rushTDById[playerId] || 0;
-
-    addStats(player, {
-      games: 1,
-      rushYards: yards,
-      rushTD: tds
-    });
-
-    addLineIfMeaningful(gameLines, player, { rushYards: yards, rushTD: tds });
+    const player = getPlayer(Number(playerId));
+    if (!player) continue;
+    const rushTD = rushTdById[playerId] || 0;
+    addStats(player, { games: 1, rushYards: yards, rushTD });
+    addPlayerLine(player, { rushYards: yards, rushTD });
   }
 
-  // Receiving distribution must sum to team passing yards and no 0-yard TDs.
-  const receivingWeights = {};
-  if (wr1) receivingWeights[wr1.id] = game.settings.offense === "Air Raid" ? 1.35 : 1.0;
-  if (wr2) receivingWeights[wr2.id] = 0.9;
-  if (wr3) receivingWeights[wr3.id] = ["Air Raid", "Spread"].includes(game.settings.offense) ? 0.75 : 0.25;
-  if (te) receivingWeights[te.id] = ["Pro Style", "Spread"].includes(game.settings.offense) ? 0.75 : 0.25;
-  if (rb) receivingWeights[rb.id] = ["Air Raid", "Spread", "Pro Style"].includes(game.settings.offense) ? 0.35 : 0.1;
-
-  const recYardsById = distributeInteger(teamStats.passYards, receivingWeights, 210);
-  const recTDById = {};
+  // Receiving distribution sums exactly to team passing. Receiving TDs go to players with yards.
+  const recWeights = [
+    { id: wr1?.id, weight: ["Air Raid", "Spread"].includes(game.settings.offense) ? 1.35 : 0.75 },
+    { id: wr2?.id, weight: ["Air Raid", "Spread"].includes(game.settings.offense) ? 1.1 : 0.55 },
+    { id: wr3?.id, weight: ["Air Raid", "Spread"].includes(game.settings.offense) ? 0.85 : 0.2 },
+    { id: te?.id, weight: ["Pro Style", "Spread"].includes(game.settings.offense) ? 0.75 : 0.3 },
+    { id: rb?.id, weight: ["Air Raid", "Spread", "Pro Style"].includes(game.settings.offense) ? 0.35 : 0.08 },
+    { id: fb?.id, weight: ["Wing-T", "Power-I"].includes(game.settings.offense) ? 0.08 : 0.02 }
+  ];
+  const recYardsById = boundedShares(teamStats.passYards, recWeights, 180);
+  const recTdById = {};
   for (let i = 0; i < teamStats.passTD; i++) {
-    const eligible = Object.entries(recYardsById).filter(([, yards]) => yards >= 8);
-    if (!eligible.length) break;
-    const [playerId] = eligible[rand(0, eligible.length - 1)];
-    recTDById[playerId] = (recTDById[playerId] || 0) + 1;
+    const scorerId = chooseWeighted(recWeights.filter(item => (recYardsById[item.id] || 0) >= 1));
+    if (scorerId) recTdById[scorerId] = (recTdById[scorerId] || 0) + 1;
   }
 
   for (const [playerId, yards] of Object.entries(recYardsById)) {
-    const player = getPlayer(playerId);
+    const player = getPlayer(Number(playerId));
     if (!player || yards <= 0) continue;
     const catches = Math.max(1, Math.min(12, Math.round(yards / rand(9, 18))));
-    const recTD = recTDById[playerId] || 0;
-
-    addStats(player, {
-      games: 1,
-      catches,
-      recYards: yards,
-      recTD
-    });
-
-    addLineIfMeaningful(gameLines, player, { catches, recYards: yards, recTD });
+    const recTD = recTdById[playerId] || 0;
+    addStats(player, { games: 1, catches, recYards: yards, recTD });
+    addPlayerLine(player, { catches, recYards: yards, recTD });
   }
 
-  // Defensive distribution: team tackles should be realistic and spread around.
-  const totalTackles = clamp(
-    42 + Math.round(opponentScore * 0.45) + rand(-6, 8),
-    32,
-    72
-  );
+  // Defensive stats from game flow, not copied from season totals.
+  const defensivePlays = clamp(42 + Math.round(opponentScore * 0.35) + rand(-6, 8), 32, 72);
+  const tackleWeights = defenders.map(defender => {
+    const roleBoost =
+      defender.defensePosition === "LB" ? 1.35 :
+      defender.defensePosition === "S" ? 1.15 :
+      defender.defensePosition === "DL" ? 0.95 :
+      0.72;
+    const talentBoost = ((defender.stats.tackling || 50) + (defender.stats.pursuit || 50)) / 115;
+    return { id: defender.id, weight: roleBoost + talentBoost };
+  });
+  const tacklesById = boundedShares(defensivePlays, tackleWeights, 15);
 
-  const tackleWeights = {};
-  for (const defender of defenders) {
-    const posBoost = defender.defensePosition === "LB" ? 1.35 : defender.defensePosition === "DL" ? 1.05 : 0.9;
-    tackleWeights[defender.id] = posBoost + (defender.stats.tackling || 50) / 100;
-  }
-
-  const tacklesById = distributeInteger(totalTackles, tackleWeights, 13);
   for (const [playerId, tackles] of Object.entries(tacklesById)) {
-    const defender = getPlayer(playerId);
+    const defender = getPlayer(Number(playerId));
     if (!defender || tackles <= 0) continue;
-
     const sacks = Math.random() < 0.10 && ["DL", "LB"].includes(defender.defensePosition) ? 1 : 0;
     const interceptions = Math.random() < 0.06 && ["CB", "S", "LB"].includes(defender.defensePosition) ? 1 : 0;
-
-    addStats(defender, {
-      games: 1,
-      tackles,
-      sacks,
-      interceptions
-    });
-
-    addLineIfMeaningful(gameLines, defender, { tackles, sacks, interceptions });
+    addStats(defender, { games: 1, tackles, sacks, interceptions });
+    addPlayerLine(defender, { tackles, sacks, interceptions });
   }
 
-  scheduledGame.playerStats = gameLines;
+  scheduledGame.playerStats = Object.values(lineStats)
+    .filter(line => Object.keys(line.stats).length)
+    .slice(0, 18);
+
+  // Rebuild the team box from player totals so the paper always matches.
+  const playerPass = sumValues(Object.fromEntries(Object.values(lineStats).map(line => [line.player, line.stats.passYards || 0])));
+  const playerRush = sumValues(Object.fromEntries(Object.values(lineStats).map(line => [line.player, line.stats.rushYards || 0])));
+  teamStats.passYards = playerPass;
+  teamStats.rushYards = playerRush;
+  teamStats.totalYards = playerPass + playerRush;
 
   const spotlight = pickSpotlight(myScore, opponentScore);
   if (spotlight) {
@@ -2962,6 +3266,24 @@ function renderRoster() {
   });
 }
 
+
+function fillRemainingDepthChart() {
+  const guessed = staffGuessDepthChart();
+
+  for (const side of ["offense", "defense", "special"]) {
+    for (const position of Object.keys(game.depth[side])) {
+      for (let slot = 0; slot < 2; slot++) {
+        if (!game.depth[side][position][slot]) {
+          const candidate = guessed[side]?.[position]?.[slot] || "";
+          if (candidate) {
+            game.depth[side][position][slot] = candidate;
+          }
+        }
+      }
+    }
+  }
+}
+
 function getDepthSortMode() { return window.depthSortMode || "best"; }
 function setDepthSortMode(mode) { window.depthSortMode = mode === "name" ? "name" : "best"; }
 function sortedPlayersForDepth(position) {
@@ -2979,7 +3301,7 @@ function renderDepth() {
   const activeSide = window.currentDepthSide || "offense";
   document.getElementById("view").innerHTML = `
     <div class="depth-toolbar">
-      <button id="fillDepthBtn">Fill Staff Guess</button>
+      <button id="fillDepthBtn">Fill Remaining</button>
       <button id="clearDepthBtn" class="secondary">Clear</button>
       <span class="pill gold">${escapeHtml(game.settings.offense)} requirements active</span>
       <label for="depthSortSelect">Sort dropdowns</label>
@@ -3012,10 +3334,11 @@ function renderDepth() {
     });
   });
   document.getElementById("fillDepthBtn").addEventListener("click", () => {
-    game.depth = staffGuessDepthChart();
+    fillRemainingDepthChart();
     recalculateTeamRatings();
     saveLocalSilent();
     renderDepth();
+    toast("Filled empty spots only.");
   });
   document.getElementById("clearDepthBtn").addEventListener("click", () => {
     game.depth = emptyDepthChart();
@@ -3932,6 +4255,7 @@ bindClick("guestSignInBtn", async () => {
 bindClick("newDynastyBtn", confirmNewDynasty);
 bindClick("topNewDynastyBtn", confirmNewDynasty);
 bindClick("advanceWeekBtn", advanceWeek);
+bindClick("watchGameBtn", watchGame);
 
 bindClick("topSaveLocalBtn", saveLocal);
 bindClick("topSaveCloudBtn", saveCloud);
@@ -3948,6 +4272,13 @@ bindClick("clearCacheBtn", () => {
 });
 
 bindClick("closeModalBtn", closeModal);
+
+const watchGameOverlayNode = document.getElementById("watchGameOverlay");
+if (watchGameOverlayNode) {
+  watchGameOverlayNode.addEventListener("click", event => {
+    if (event.target.id === "watchGameOverlay") closeWatchGameOverlay();
+  });
+}
 
 const playerSelectOverlayNode = document.getElementById("playerSelectOverlay");
 if (playerSelectOverlayNode) {
