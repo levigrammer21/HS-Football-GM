@@ -1,6 +1,6 @@
 
 "use strict";
-const BUILD_VERSION = "v0.0.22-alpha";
+const BUILD_VERSION = "v0.0.23-alpha";
 const BUILD_DATE = "2026-06-12";
 
 function reportFatalError(error) {
@@ -4329,6 +4329,15 @@ if (importFileInput) {
   });
 }
 
+
+
+document.addEventListener("click", event => {
+  const watchButton = event.target.closest?.("#watchGameBtn");
+  if (watchButton) {
+    event.preventDefault();
+    watchGame();
+  }
+});
 
 /* -------------------------------- Startup -------------------------------- */
 
