@@ -1,6 +1,6 @@
 
 "use strict";
-const BUILD_VERSION = "v0.0.12-alpha";
+const BUILD_VERSION = "v0.0.13-alpha";
 const BUILD_DATE = "2026-06-12";
 
 function reportFatalError(error) {
@@ -1161,9 +1161,70 @@ function confirmNewDynasty() {
     createNewDynastyIntro();
   }
 }
+
+function playerDepthRoles(playerId) {
+  const roles = [];
+  if (!game?.depth || !playerId) return roles;
+
+  for (const [side, positions] of Object.entries(game.depth)) {
+    for (const [position, slots] of Object.entries(positions)) {
+      if (slots[0] === playerId) roles.push({ type: "Starter", side, position });
+      if (slots[1] === playerId) roles.push({ type: "Backup", side, position });
+    }
+  }
+
+  return roles;
+}
+
+function playerVarsityStatus(playerId) {
+  const roles = playerDepthRoles(playerId);
+  if (!roles.length) return "JV";
+
+  const starters = roles.filter(role => role.type === "Starter").map(role => `${role.type} ${role.position}`);
+  const backups = roles.filter(role => role.type === "Backup").map(role => `${role.type} ${role.position}`);
+  return [...starters, ...backups].join(" / ");
+}
+
+function playerSimpleStatus(playerId) {
+  const roles = playerDepthRoles(playerId);
+  if (!roles.length) return "JV";
+  if (roles.some(role => role.type === "Starter")) return "STARTER";
+  return "BACKUP";
+}
+
+function playerStatusClass(playerId) {
+  const status = playerSimpleStatus(playerId);
+  if (status === "STARTER") return "starter";
+  if (status === "BACKUP") return "backup";
+  return "jv";
+}
+
+function playerStatusPill(playerId) {
+  const status = playerSimpleStatus(playerId);
+  return `<span class="status-pill ${playerStatusClass(playerId)}">${status}</span>`;
+}
+
+function varsityCounts() {
+  const varsityIds = new Set();
+  if (!game?.depth) return { varsity: 0, jv: game?.players?.length || 0 };
+
+  for (const side of Object.values(game.depth)) {
+    for (const slots of Object.values(side)) {
+      if (slots[0]) varsityIds.add(slots[0]);
+      if (slots[1]) varsityIds.add(slots[1]);
+    }
+  }
+
+  return {
+    varsity: varsityIds.size,
+    jv: Math.max(0, game.players.length - varsityIds.size)
+  };
+}
+
+
 function playerCurrentRoleText(player) {
   if (!player) return "";
-  return `${player.offensePosition ? `Off ${player.offensePosition}` : "Off -"} / ${player.defensePosition ? `Def ${player.defensePosition}` : "Def -"} / ${player.specialPosition ? `ST ${player.specialPosition}` : "ST -"}`;
+  return playerVarsityStatus(player.id);
 }
 function currentAssignedGradeText(player) {
   if (!player) return "";
@@ -1174,7 +1235,8 @@ function currentAssignedGradeText(player) {
   return grades.join(" • ");
 }
 function depthOptionLabel(player, position) {
-  return `${player.name} • ${player.grade} • ${formatHeight(player.height)} ${player.weight} • ${playerCurrentRoleText(player)} • Here: ${letterGrade(positionFit(player, position))}`;
+  const projected = letterGrade(positionFit(player, position));
+  return `${player.name} • ${player.grade} • ${formatHeight(player.height)} ${player.weight} • ${playerSimpleStatus(player.id)} • Here: ${projected}`;
 }
 
 function advanceWeek() {
@@ -2779,6 +2841,11 @@ function renderDashboard() {
     <div class="grid three" style="margin-top:14px">
       <div class="card">
         <h3>Team Snapshot</h3>
+        <div class="varsity-snapshot">
+          <span class="status-pill starter">Varsity ${varsityCounts().varsity}</span>
+          <span class="status-pill jv">JV ${varsityCounts().jv}</span>
+        </div>
+        <br>
         ${ratingLine("Offense", stroud.offenseRating)}
         ${ratingLine("Defense", stroud.defenseRating)}
         ${ratingLine("Power", stroud.power)}
@@ -3030,7 +3097,7 @@ function depthPositionNote(side, position) {
     if (["DT1", "DT2", "LE", "RE"].includes(position)) return "Controls the line. Huge against run-heavy teams.";
   }
 
-  return "Only starter and backup enter games. Extra players at this position are reserves.";
+  return "Only starter and backup enter games. Everyone else is JV until placed in the two-deep.";
 }
 
 function renderDepthSelect(side, position, slot, selectedId) {
@@ -3049,7 +3116,7 @@ function renderDepthSelect(side, position, slot, selectedId) {
         `).join("")}
       </select>
       <div class="depth-player-mini"><span class="pill ${gradeClassName}">Here: ${grade}</span></div>
-      ${player ? `<div class="depth-context">${escapeHtml(playerCurrentRoleText(player))}<br>${escapeHtml(currentAssignedGradeText(player))}</div>` : ""}
+      ${player ? `<div class="depth-context">${playerStatusPill(player.id)}<br>${escapeHtml(playerVarsityStatus(player.id))}</div>` : ""}
     </div>
   `;
 }
@@ -3303,7 +3370,8 @@ function playerPositionEditor(player) {
   return `
     <div class="card" style="margin-bottom:14px">
       <h3>Set Player Positions</h3>
-      <p class="muted">Change positions right here while looking at the player card.</p>
+      <p>${playerStatusPill(player.id)} <span class="muted">${escapeHtml(playerVarsityStatus(player.id))}</span></p>
+      <p class="muted">Change position labels here. Actual playing time comes from the varsity depth chart.</p>
       <div class="grid three">
         <div><label class="muted small">Offense</label><select id="playerOffensePos">${optionHtml(offenseOptions, player.offensePosition)}</select></div>
         <div><label class="muted small">Defense</label><select id="playerDefensePos">${optionHtml(defenseOptions, player.defensePosition)}</select></div>
@@ -3347,7 +3415,7 @@ function openPlayerCard(playerId) {
 
   setModal(
     player.name,
-    `${player.grade} • ${formatHeight(player.height)} • ${player.weight} lbs • Off ${player.offensePosition} • Def ${player.defensePosition}`,
+    `${player.grade} • ${formatHeight(player.height)} • ${player.weight} lbs • ${playerVarsityStatus(player.id)}`,
     `
       ${playerPositionEditor(player)}
       <div class="grid two">
@@ -3503,6 +3571,67 @@ function confirmNewDynasty() {
 
   if (ok) createNewDynastyIntro();
 }
+
+
+function playerDepthRoles(playerId) {
+  const roles = [];
+  if (!game?.depth || !playerId) return roles;
+
+  for (const [side, positions] of Object.entries(game.depth)) {
+    for (const [position, slots] of Object.entries(positions)) {
+      if (slots[0] === playerId) roles.push({ type: "Starter", side, position });
+      if (slots[1] === playerId) roles.push({ type: "Backup", side, position });
+    }
+  }
+
+  return roles;
+}
+
+function playerVarsityStatus(playerId) {
+  const roles = playerDepthRoles(playerId);
+  if (!roles.length) return "JV";
+
+  const starters = roles.filter(role => role.type === "Starter").map(role => `${role.type} ${role.position}`);
+  const backups = roles.filter(role => role.type === "Backup").map(role => `${role.type} ${role.position}`);
+  return [...starters, ...backups].join(" / ");
+}
+
+function playerSimpleStatus(playerId) {
+  const roles = playerDepthRoles(playerId);
+  if (!roles.length) return "JV";
+  if (roles.some(role => role.type === "Starter")) return "STARTER";
+  return "BACKUP";
+}
+
+function playerStatusClass(playerId) {
+  const status = playerSimpleStatus(playerId);
+  if (status === "STARTER") return "starter";
+  if (status === "BACKUP") return "backup";
+  return "jv";
+}
+
+function playerStatusPill(playerId) {
+  const status = playerSimpleStatus(playerId);
+  return `<span class="status-pill ${playerStatusClass(playerId)}">${status}</span>`;
+}
+
+function varsityCounts() {
+  const varsityIds = new Set();
+  if (!game?.depth) return { varsity: 0, jv: game?.players?.length || 0 };
+
+  for (const side of Object.values(game.depth)) {
+    for (const slots of Object.values(side)) {
+      if (slots[0]) varsityIds.add(slots[0]);
+      if (slots[1]) varsityIds.add(slots[1]);
+    }
+  }
+
+  return {
+    varsity: varsityIds.size,
+    jv: Math.max(0, game.players.length - varsityIds.size)
+  };
+}
+
 
 function playerCurrentRoleText(player) {
   if (!player) return "";
