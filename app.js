@@ -1,6 +1,6 @@
 
 "use strict";
-const BUILD_VERSION = "v0.0.23-alpha";
+const BUILD_VERSION = "v0.0.24-alpha";
 const BUILD_DATE = "2026-06-12";
 
 function reportFatalError(error) {
@@ -3750,6 +3750,63 @@ function bindPlayerPositionEditor(player) {
     openPlayerCard(player.id);
     if (currentView === "roster" || currentView === "depth") render();
   });
+}
+
+
+function ensurePlayerPortrait(player) {
+  if (!player.portrait) {
+    const seed = Math.abs(Number(player.id || 1) * 9301 + player.name.split("").reduce((sum, ch) => sum + ch.charCodeAt(0), 0) * 49297) % 233280;
+    const pick = (arr, offset = 0) => arr[(seed + offset) % arr.length];
+
+    player.portrait = {
+      skin: pick(["#f2c7a4", "#d99b73", "#b87955", "#8f563b", "#6f3f2b"], 1),
+      hair: pick(["#1f1410", "#3b2418", "#5b351f", "#d7b56d", "#111827", "#7a4a2a"], 3),
+      hairStyle: pick(["short", "flat", "curly", "shag", "mohawk", "buzz"], 5),
+      eyes: pick(["#111827", "#263238", "#214761", "#3c2a1e"], 7),
+      mouth: pick(["neutral", "smile", "serious"], 9),
+      facialHair: player.grade === "FR" ? "none" : pick(["none", "none", "stache", "goatee"], 11),
+      face: pick(["round", "square", "long"], 13)
+    };
+  }
+  return player.portrait;
+}
+
+function playerPortraitSvg(player) {
+  const p = ensurePlayerPortrait(player);
+  const faceW = p.face === "square" ? 54 : p.face === "long" ? 48 : 52;
+  const faceH = p.face === "long" ? 62 : 56;
+  const mouthPath = p.mouth === "smile" ? "M48 70 Q58 78 68 70" : p.mouth === "serious" ? "M48 72 L68 72" : "M50 72 Q58 74 66 72";
+  const hair = {
+    buzz: `<rect x="35" y="22" width="46" height="18" rx="8" fill="${p.hair}"/>`,
+    short: `<path d="M34 44 Q38 20 58 20 Q80 21 83 45 Q70 32 58 34 Q45 32 34 44Z" fill="${p.hair}"/>`,
+    flat: `<path d="M34 39 Q38 18 80 25 L84 42 Q62 32 34 39Z" fill="${p.hair}"/>`,
+    curly: `<path d="M33 42 C30 24 43 18 50 24 C56 14 68 19 70 26 C82 22 88 35 82 47 C68 33 49 32 33 42Z" fill="${p.hair}"/>`,
+    shag: `<path d="M31 42 Q40 18 60 21 Q82 23 86 45 Q78 39 74 56 Q68 40 59 38 Q45 39 38 56 Q36 45 31 42Z" fill="${p.hair}"/>`,
+    mohawk: `<path d="M54 14 L64 14 L70 42 L48 42Z" fill="${p.hair}"/><path d="M36 43 Q45 31 58 31 Q74 31 82 44 L82 51 Q61 41 36 51Z" fill="${p.hair}"/>`
+  }[p.hairStyle];
+
+  const facial = p.facialHair === "stache"
+    ? `<path d="M48 66 Q56 62 64 66 Q56 70 48 66Z" fill="${p.hair}"/>`
+    : p.facialHair === "goatee"
+      ? `<path d="M52 75 Q58 85 64 75 Q59 80 52 75Z" fill="${p.hair}"/>`
+      : "";
+
+  return `
+    <svg viewBox="0 0 116 116" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${escapeHtml(player.name)} portrait">
+      <rect width="116" height="116" fill="#081426"/>
+      <path d="M24 110 Q58 82 92 110Z" fill="#173fb8"/>
+      <path d="M31 110 Q58 90 85 110Z" fill="#f7f7f7" opacity=".95"/>
+      <rect x="${58 - faceW/2}" y="32" width="${faceW}" height="${faceH}" rx="${p.face === "square" ? 13 : 24}" fill="${p.skin}"/>
+      ${hair}
+      <circle cx="47" cy="57" r="4" fill="${p.eyes}"/>
+      <circle cx="69" cy="57" r="4" fill="${p.eyes}"/>
+      <path d="M42 50 Q48 47 53 50" stroke="#111827" stroke-width="3" fill="none" stroke-linecap="round"/>
+      <path d="M64 50 Q70 47 75 50" stroke="#111827" stroke-width="3" fill="none" stroke-linecap="round"/>
+      <path d="M58 59 L54 66 L61 66" stroke="#8b5a40" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="${mouthPath}" stroke="#3d261b" stroke-width="3" fill="none" stroke-linecap="round"/>
+      ${facial}
+    </svg>
+  `;
 }
 
 function openPlayerCard(playerId) {
