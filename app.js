@@ -1,18 +1,22 @@
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
-import {
-  getFirestore,
-  doc,
-  getDoc,
-  setDoc,
-  serverTimestamp
-} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
-import {
-  getAuth,
-  GoogleAuthProvider,
-  signInWithPopup,
-  signInAnonymously,
-  onAuthStateChanged
-} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+
+window.addEventListener("error", event => {
+  console.error("HSFG runtime error", event.error || event.message);
+  const toastBox = document.getElementById("toast");
+  if (toastBox) {
+    const node = document.createElement("div");
+    node.textContent = `Code error: ${event.message}. Try Clear Cache & Reload.`;
+    toastBox.appendChild(node);
+  }
+});
+window.addEventListener("unhandledrejection", event => {
+  console.error("HSFG promise error", event.reason);
+  const toastBox = document.getElementById("toast");
+  if (toastBox) {
+    const node = document.createElement("div");
+    node.textContent = `Promise error: ${event.reason?.message || event.reason}.`;
+    toastBox.appendChild(node);
+  }
+});
 
 /* ----------------------------- Firebase setup ---------------------------- */
 
@@ -25,12 +29,58 @@ const firebaseConfig = {
   appId: "1:472368284803:web:b0cabd6331c90661f147b6"
 };
 
-const firebaseApp = initializeApp(firebaseConfig);
-const db = getFirestore(firebaseApp);
-const auth = getAuth(firebaseApp);
-const googleProvider = new GoogleAuthProvider();
+let firebaseReady = null;
+let firebaseApi = null;
+let currentUser = null;
+
+async function ensureFirebase() {
+  if (firebaseApi) return firebaseApi;
+  if (firebaseReady) return firebaseReady;
+
+  firebaseReady = Promise.all([
+    import("https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js"),
+    import("https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js"),
+    import("https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js")
+  ]).then(([appModule, firestoreModule, authModule]) => {
+    const firebaseApp = appModule.initializeApp(firebaseConfig);
+    const db = firestoreModule.getFirestore(firebaseApp);
+    const auth = authModule.getAuth(firebaseApp);
+    const googleProvider = new authModule.GoogleAuthProvider();
+
+    firebaseApi = {
+      db,
+      auth,
+      googleProvider,
+      doc: firestoreModule.doc,
+      getDoc: firestoreModule.getDoc,
+      setDoc: firestoreModule.setDoc,
+      serverTimestamp: firestoreModule.serverTimestamp,
+      signInWithPopup: authModule.signInWithPopup,
+      signInAnonymously: authModule.signInAnonymously,
+      onAuthStateChanged: authModule.onAuthStateChanged
+    };
+
+    firebaseApi.onAuthStateChanged(auth, user => {
+      currentUser = user;
+      if (game) {
+        showApp();
+        render();
+      }
+    });
+
+    return firebaseApi;
+  }).catch(error => {
+    firebaseReady = null;
+    console.error("Firebase failed to load", error);
+    toast("Firebase failed to load. Local play still works.");
+    throw error;
+  });
+
+  return firebaseReady;
+}
 
 /* ------------------------------- Constants ------------------------------- */
+
 
 const STORAGE_KEY = "hsfg_readable_v1";
 
@@ -231,9 +281,18 @@ const LAST_NAMES = [
   "Wood", "Woods", "Wright", "Young"
 ];
 
+
+function bindClick(id, handler) {
+  const node = document.getElementById(id);
+  if (!node) {
+    console.warn(`Missing button: ${id}`);
+    return;
+  }
+  node.addEventListener("click", handler);
+}
+
 /* --------------------------------- State -------------------------------- */
 
-let currentUser = null;
 let game = null;
 let currentView = "dashboard";
 let rosterSort = { key: "name", dir: 1 };
@@ -2012,18 +2071,23 @@ function loadLocal() {
     game = JSON.parse(raw);
     migrateSave();
     return true;
-  } catch {
+  } catch (error) {
+    console.error("Load local failed", error);
     return false;
   }
 }
 
 function migrateSave() {
   game.version = 1;
+  game.teams ||= createTeams();
+  if (!game.teams.some(team => team.id === "team_stroud")) game.teams = createTeams();
   game.players ||= [];
   game.records ||= { season: {}, career: {} };
   game.awards ||= [];
   game.history ||= [];
-  game.depth ||= emptyDepthChart();
+  if (!game.depth || !game.depth.offense || !game.depth.defense || !game.depth.special) {
+    game.depth = emptyDepthChart();
+  }
   game.prestige ??= 25;
   game.rivalries ||= createRivalries();
   ensureRivalTeams();
@@ -2041,6 +2105,13 @@ function migrateSave() {
 }
 
 async function saveCloud() {
+  let fb;
+  try {
+    fb = await ensureFirebase();
+  } catch {
+    return;
+  }
+
   if (!currentUser) {
     toast("Sign in first.");
     return;
@@ -2051,8 +2122,8 @@ async function saveCloud() {
     return;
   }
 
-  await setDoc(doc(db, "users", currentUser.uid, "saves", "main"), {
-    updatedAt: serverTimestamp(),
+  await fb.setDoc(fb.doc(fb.db, "users", currentUser.uid, "saves", "main"), {
+    updatedAt: fb.serverTimestamp(),
     gameState: game
   });
 
@@ -2060,12 +2131,19 @@ async function saveCloud() {
 }
 
 async function loadCloud() {
+  let fb;
+  try {
+    fb = await ensureFirebase();
+  } catch {
+    return;
+  }
+
   if (!currentUser) {
     toast("Sign in first.");
     return;
   }
 
-  const snapshot = await getDoc(doc(db, "users", currentUser.uid, "saves", "main"));
+  const snapshot = await fb.getDoc(fb.doc(fb.db, "users", currentUser.uid, "saves", "main"));
   if (!snapshot.exists()) {
     toast("No cloud save found.");
     return;
@@ -3133,91 +3211,99 @@ function adjustPrestigeForGame(scheduledGame) {
 
 /* ------------------------------- Listeners ------------------------------- */
 
-document.getElementById("googleSignInBtn").addEventListener("click", async () => {
+bindClick("googleSignInBtn", async () => {
   try {
-    await signInWithPopup(auth, googleProvider);
-    if (!game && loadLocal()) showApp();
-    else toast("Signed in. Start or load a dynasty.");
+    const fb = await ensureFirebase();
+    await fb.signInWithPopup(fb.auth, fb.googleProvider);
+    if (!game && loadLocal()) {
+      showApp();
+      render();
+    } else {
+      toast("Signed in. Start or load a dynasty.");
+    }
   } catch (error) {
     toast(`Google failed: ${error.message}`);
   }
 });
 
-document.getElementById("guestSignInBtn").addEventListener("click", async () => {
-  try {
-    await signInAnonymously(auth);
-    if (loadLocal()) {
-      showApp();
-      render();
-    } else {
-      toast("Guest signed in. Start a dynasty.");
-    }
-  } catch (error) {
-    toast(`Guest failed: ${error.message}`);
+bindClick("guestSignInBtn", () => {
+  currentUser = { uid: "local_guest", isAnonymous: true };
+  if (loadLocal()) {
+    showApp();
+    render();
+  } else {
+    showLogin();
+    toast("Guest mode ready. Tap New Dynasty.");
   }
 });
 
-document.getElementById("newDynastyBtn").addEventListener("click", confirmNewDynasty);
-document.getElementById("topNewDynastyBtn").addEventListener("click", confirmNewDynasty);
-document.getElementById("advanceWeekBtn").addEventListener("click", advanceWeek);
+bindClick("newDynastyBtn", confirmNewDynasty);
+bindClick("topNewDynastyBtn", confirmNewDynasty);
+bindClick("advanceWeekBtn", advanceWeek);
 
-document.getElementById("topSaveLocalBtn").addEventListener("click", saveLocal);
-document.getElementById("topSaveCloudBtn").addEventListener("click", saveCloud);
-document.getElementById("topLoadCloudBtn").addEventListener("click", loadCloud);
-document.getElementById("topExportBtn").addEventListener("click", exportSave);
+bindClick("topSaveLocalBtn", saveLocal);
+bindClick("topSaveCloudBtn", saveCloud);
+bindClick("topLoadCloudBtn", loadCloud);
+bindClick("topExportBtn", exportSave);
 
-document.getElementById("loadCloudBtnLogin").addEventListener("click", loadCloud);
-document.getElementById("settingsBtn").addEventListener("click", openSettings);
-document.getElementById("tutorialBtn").addEventListener("click", openTutorial);
+bindClick("loadCloudBtnLogin", loadCloud);
+bindClick("settingsBtn", openSettings);
+bindClick("tutorialBtn", openTutorial);
 
-document.getElementById("clearCacheBtn").addEventListener("click", () => {
+bindClick("clearCacheBtn", () => {
   localStorage.clear();
   location.reload();
 });
 
-document.getElementById("closeModalBtn").addEventListener("click", closeModal);
-document.getElementById("modalBackdrop").addEventListener("click", event => {
-  if (event.target.id === "modalBackdrop") closeModal();
+bindClick("closeModalBtn", closeModal);
+
+const modalBackdropNode = document.getElementById("modalBackdrop");
+if (modalBackdropNode) {
+  modalBackdropNode.addEventListener("click", event => {
+    if (event.target.id === "modalBackdrop") closeModal();
+  });
+}
+
+bindClick("importSaveBtnLogin", () => {
+  document.getElementById("importFileInput")?.click();
 });
 
-document.getElementById("importSaveBtnLogin").addEventListener("click", () => {
-  document.getElementById("importFileInput").click();
-});
+const importFileInput = document.getElementById("importFileInput");
+if (importFileInput) {
+  importFileInput.addEventListener("change", event => {
+    const file = event.target.files[0];
+    if (!file) return;
 
-document.getElementById("importFileInput").addEventListener("change", event => {
-  const file = event.target.files[0];
-  if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        game = JSON.parse(reader.result);
+        migrateSave();
+        saveLocalSilent();
+        showApp();
+        render();
+        toast("Imported save.");
+      } catch {
+        toast("Import failed.");
+      }
+    };
 
-  const reader = new FileReader();
-  reader.onload = () => {
-    try {
-      game = JSON.parse(reader.result);
-      migrateSave();
-      saveLocalSilent();
-      showApp();
-      render();
-      toast("Imported save.");
-    } catch {
-      toast("Import failed.");
-    }
-  };
+    reader.readAsText(file);
+  });
+}
 
-  reader.readAsText(file);
-});
-
-onAuthStateChanged(auth, user => {
-  currentUser = user;
-  if (game) {
-    showApp();
-    render();
-  }
-});
 
 /* -------------------------------- Startup -------------------------------- */
 
-if (loadLocal()) {
-  showApp();
-  render();
-} else {
+try {
+  if (loadLocal()) {
+    showApp();
+    render();
+  } else {
+    showLogin();
+  }
+} catch (error) {
+  console.error("Startup failed", error);
   showLogin();
+  toast("Old save caused a startup error. Use Clear Cache & Reload or start a New Dynasty.");
 }
