@@ -1,6 +1,6 @@
 
 "use strict";
-const BUILD_VERSION = "v0.0.10-alpha";
+const BUILD_VERSION = "v0.0.12-alpha";
 const BUILD_DATE = "2026-06-12";
 
 function reportFatalError(error) {
@@ -161,7 +161,7 @@ const MASCOTS = {
   Wilburton: "Diggers"
 };
 
-const RIVALS = ["Chandler", "Bristow", "Prague", "Cushing"];
+const RIVALS = ["Chandler", "Prague", "Bristow", "Cushing"];
 const EXTRA_TEAMS = ["Bristow", "Cushing"];
 
 const OFFENSE_POSITIONS = ["QB", "RB", "FB", "WR1", "WR2", "WR3", "TE", "LT", "LG", "C", "RG", "RT"];
@@ -1184,6 +1184,7 @@ function advanceWeek() {
   }
 
   playSound("click");
+  closeModal();
 
   if (game.phase === "intro") {
     showIntroNewspaper();
@@ -1209,7 +1210,7 @@ function advanceWeek() {
 
   saveLocal();
   render();
-  showNewspaperPopup();
+  showFinalResultThenPaper();
 }
 
 function runRegularWeek() {
@@ -1481,6 +1482,58 @@ function addGameStatLine(lines, player, stats) {
 }
 
 
+
+function distributeInteger(total, weights, maxEach = Infinity) {
+  const entries = Object.entries(weights).filter(([, w]) => w > 0);
+  let remaining = Math.max(0, Math.round(total));
+  const output = {};
+
+  for (const [id] of entries) output[id] = 0;
+  const totalWeight = entries.reduce((sum, [, w]) => sum + w, 0) || 1;
+
+  for (const [id, weight] of entries) {
+    const value = Math.min(maxEach, Math.floor(total * (weight / totalWeight)));
+    output[id] = value;
+    remaining -= value;
+  }
+
+  let guard = 0;
+  while (remaining > 0 && guard < 10000) {
+    guard += 1;
+    const [id] = entries[rand(0, entries.length - 1)];
+    if (output[id] < maxEach) {
+      output[id] += 1;
+      remaining -= 1;
+    } else if (entries.every(([otherId]) => output[otherId] >= maxEach)) {
+      break;
+    }
+  }
+
+  return output;
+}
+
+function offensivePlayerIdsFromDepth(depth) {
+  return {
+    qb: depth.offense.QB?.[0],
+    rb: depth.offense.RB?.[0],
+    fb: depth.offense.FB?.[0],
+    wr1: depth.offense.WR1?.[0],
+    wr2: depth.offense.WR2?.[0],
+    wr3: depth.offense.WR3?.[0],
+    te: depth.offense.TE?.[0]
+  };
+}
+
+function addLineIfMeaningful(lines, player, stats) {
+  if (!player) return;
+  const clean = {};
+  for (const [key, value] of Object.entries(stats)) {
+    const n = Math.round(Number(value) || 0);
+    if (n !== 0) clean[key] = n;
+  }
+  if (Object.keys(clean).length) addGameStatLine(lines, player, clean);
+}
+
 function rushingSharesForScheme() {
   const scheme = game.settings.offense;
   if (scheme === "Wing-T") return { qb: 0.08, rb: 0.28, fb: 0.34, wr: 0.10, other: 0.20 };
@@ -1494,76 +1547,134 @@ function rushingSharesForScheme() {
 function applyStroudStats(scheduledGame, participation) {
   const stroudIsHome = scheduledGame.homeId === "team_stroud";
   const teamStats = stroudIsHome ? scheduledGame.stats.home : scheduledGame.stats.away;
-  const myScore = stroudIsHome ? scheduledGame.homeScore : scheduledGame.awayScore;
   const opponentScore = stroudIsHome ? scheduledGame.awayScore : scheduledGame.homeScore;
+  const myScore = stroudIsHome ? scheduledGame.homeScore : scheduledGame.awayScore;
 
-  const offense = participation[0].offense;
-  const defense = participation[0].defense;
+  const firstDepth = participation[0];
+  const ids = offensivePlayerIdsFromDepth(firstDepth);
+  const defense = firstDepth.defense;
   const quarterShare = playerQuarterShares(participation);
   const gameLines = [];
 
-  const qb = getPlayer(offense.QB[0]);
-  const rb = getPlayer(offense.RB[0]);
-  const fb = getPlayer(offense.FB[0]);
-  const receivers = ["WR1", "WR2", "WR3", "TE"].map(pos => getPlayer(offense[pos][0])).filter(Boolean);
+  const qb = getPlayer(ids.qb);
+  const rb = getPlayer(ids.rb);
+  const fb = getPlayer(ids.fb);
+  const wr1 = getPlayer(ids.wr1);
+  const wr2 = getPlayer(ids.wr2);
+  const wr3 = getPlayer(ids.wr3);
+  const te = getPlayer(ids.te);
+  const receivers = [wr1, wr2, wr3, te].filter(Boolean);
   const defenders = DEFENSE_POSITIONS.map(pos => getPlayer(defense[pos][0])).filter(Boolean);
 
+  // Passing: keep HS stat lines sane.
   if (qb) {
+    const share = quarterShare[qb.id] || 1;
+    const passYards = scaledStat(teamStats.passYards, share);
+    const passTD = scaledStat(teamStats.passTD, share);
+    const qbRush = scaledStat(teamStats.rushYards * rushingSharesForScheme().qb, share);
+
     addStats(qb, {
       games: 1,
-      passYards: scaledStat(teamStats.passYards, quarterShare[qb.id] || 1),
-      passTD: scaledStat(teamStats.passTD, quarterShare[qb.id] || 1),
-      intThrown: teamStats.turnovers ? rand(0, Math.min(3, teamStats.turnovers)) : 0,
-      rushYards: ["Option", "Flexbone", "Wishbone", "Wing-T"].includes(game.settings.offense)
-        ? scaledStat(teamStats.rushYards * rushingSharesForScheme().qb, quarterShare[qb.id] || 1)
-        : scaledStat(rand(-10, 35), quarterShare[qb.id] || 1),
-      rushTD: Math.random() < 0.22 ? 1 : 0
+      passYards,
+      passTD,
+      intThrown: teamStats.turnovers ? rand(0, Math.min(2, teamStats.turnovers)) : 0,
+      rushYards: qbRush,
+      rushTD: Math.random() < 0.15 ? 1 : 0
     });
+
+    addLineIfMeaningful(gameLines, qb, { passYards, passTD, rushYards: qbRush });
   }
 
-  if (rb) {
-    addStats(rb, {
+  // Rushing distribution must never exceed team rushing.
+  const rushShare = rushingSharesForScheme();
+  const rushingWeights = {};
+  if (rb) rushingWeights[rb.id] = rushShare.rb;
+  if (fb) rushingWeights[fb.id] = rushShare.fb;
+  if (qb) rushingWeights[qb.id] = rushShare.qb;
+  if (wr1) rushingWeights[wr1.id] = rushShare.wr / 2;
+  if (wr2) rushingWeights[wr2.id] = rushShare.wr / 2;
+
+  const rushYardsById = distributeInteger(teamStats.rushYards, rushingWeights, 240);
+  const rushTDById = distributeInteger(teamStats.rushTD, rushingWeights, 5);
+
+  for (const [playerId, yards] of Object.entries(rushYardsById)) {
+    const player = getPlayer(playerId);
+    if (!player || player === qb) continue;
+    const tds = rushTDById[playerId] || 0;
+
+    addStats(player, {
       games: 1,
-      rushYards: scaledStat(teamStats.rushYards * rushingSharesForScheme().rb, quarterShare[rb.id] || 1),
-      rushTD: teamStats.rushTD,
-      catches: rand(0, 4),
-      recYards: rand(0, 42)
+      rushYards: yards,
+      rushTD: tds
     });
+
+    addLineIfMeaningful(gameLines, player, { rushYards: yards, rushTD: tds });
   }
 
-  if (fb) {
-    addStats(fb, {
-      games: 1,
-      rushYards: scaledStat(teamStats.rushYards * rushingSharesForScheme().fb, quarterShare[fb.id] || 1),
-      rushTD: Math.random() < 0.18 ? 1 : 0
-    });
+  // Receiving distribution must sum to team passing yards and no 0-yard TDs.
+  const receivingWeights = {};
+  if (wr1) receivingWeights[wr1.id] = game.settings.offense === "Air Raid" ? 1.35 : 1.0;
+  if (wr2) receivingWeights[wr2.id] = 0.9;
+  if (wr3) receivingWeights[wr3.id] = ["Air Raid", "Spread"].includes(game.settings.offense) ? 0.75 : 0.25;
+  if (te) receivingWeights[te.id] = ["Pro Style", "Spread"].includes(game.settings.offense) ? 0.75 : 0.25;
+  if (rb) receivingWeights[rb.id] = ["Air Raid", "Spread", "Pro Style"].includes(game.settings.offense) ? 0.35 : 0.1;
+
+  const recYardsById = distributeInteger(teamStats.passYards, receivingWeights, 210);
+  const recTDById = {};
+  for (let i = 0; i < teamStats.passTD; i++) {
+    const eligible = Object.entries(recYardsById).filter(([, yards]) => yards >= 8);
+    if (!eligible.length) break;
+    const [playerId] = eligible[rand(0, eligible.length - 1)];
+    recTDById[playerId] = (recTDById[playerId] || 0) + 1;
   }
 
-  for (const receiver of receivers) {
-    const yards = scaledStat(teamStats.passYards * (Math.random() * 0.25 + 0.13), quarterShare[receiver.id] || 1);
-    const catches = Math.max(1, Math.round(yards / rand(10, 17)));
-    const recTD = Math.random() < 0.28 ? 1 : 0;
-    addStats(receiver, {
+  for (const [playerId, yards] of Object.entries(recYardsById)) {
+    const player = getPlayer(playerId);
+    if (!player || yards <= 0) continue;
+    const catches = Math.max(1, Math.min(12, Math.round(yards / rand(9, 18))));
+    const recTD = recTDById[playerId] || 0;
+
+    addStats(player, {
       games: 1,
       catches,
       recYards: yards,
       recTD
     });
-    addGameStatLine(gameLines, receiver, { catches, recYards: yards, recTD });
+
+    addLineIfMeaningful(gameLines, player, { catches, recYards: yards, recTD });
   }
 
+  // Defensive distribution: team tackles should be realistic and spread around.
+  const totalTackles = clamp(
+    42 + Math.round(opponentScore * 0.45) + rand(-6, 8),
+    32,
+    72
+  );
+
+  const tackleWeights = {};
   for (const defender of defenders) {
-    const tackles = scaledStat(rand(2, 12) + (opponentScore > 30 ? rand(0, 4) : 0), quarterShare[defender.id] || 1);
-    const sacks = Math.random() < 0.16 ? 1 : 0;
-    const interceptions = Math.random() < 0.1 ? 1 : 0;
-    addStats(defender, { games: 1, tackles, sacks, interceptions });
-    addGameStatLine(gameLines, defender, { tackles, sacks, interceptions });
+    const posBoost = defender.defensePosition === "LB" ? 1.35 : defender.defensePosition === "DL" ? 1.05 : 0.9;
+    tackleWeights[defender.id] = posBoost + (defender.stats.tackling || 50) / 100;
   }
 
-  addGameStatLine(gameLines, qb, qb ? { passYards: scaledStat(teamStats.passYards, quarterShare[qb.id] || 1), passTD: scaledStat(teamStats.passTD, quarterShare[qb.id] || 1) } : {});
-  addGameStatLine(gameLines, rb, rb ? { rushYards: scaledStat(teamStats.rushYards * rushingSharesForScheme().rb, quarterShare[rb.id] || 1), rushTD: teamStats.rushTD } : {});
-  // receiver game lines are added in receiving loop
-  // defender game lines are added in defensive loop
+  const tacklesById = distributeInteger(totalTackles, tackleWeights, 13);
+  for (const [playerId, tackles] of Object.entries(tacklesById)) {
+    const defender = getPlayer(playerId);
+    if (!defender || tackles <= 0) continue;
+
+    const sacks = Math.random() < 0.10 && ["DL", "LB"].includes(defender.defensePosition) ? 1 : 0;
+    const interceptions = Math.random() < 0.06 && ["CB", "S", "LB"].includes(defender.defensePosition) ? 1 : 0;
+
+    addStats(defender, {
+      games: 1,
+      tackles,
+      sacks,
+      interceptions
+    });
+
+    addLineIfMeaningful(gameLines, defender, { tackles, sacks, interceptions });
+  }
+
   scheduledGame.playerStats = gameLines;
 
   const spotlight = pickSpotlight(myScore, opponentScore);
@@ -1574,8 +1685,8 @@ function applyStroudStats(scheduledGame, participation) {
   }
 
   const starters = new Set([
-    ...Object.values(participation[0].offense).map(slots => slots[0]),
-    ...Object.values(participation[0].defense).map(slots => slots[0])
+    ...Object.values(firstDepth.offense).map(slots => slots[0]),
+    ...Object.values(firstDepth.defense).map(slots => slots[0])
   ].filter(Boolean));
 
   for (const playerId of starters) {
@@ -1717,10 +1828,16 @@ function makeWeeklyPaper(week, games) {
     }
   }
 
-  const rare = game.players
+  let rare = game.players
     .flatMap(player => player.notes.slice(0, 1).map(note => ({ name: player.name, note })))
     .filter(item => /lights|pressure|clutch|Friday|adjustments/i.test(item.note))
     .slice(0, 3);
+
+  const flavorPlayer = choice(game.players);
+  if (rare.length < 3 && flavorPlayer) {
+    const context = flavorPlayer.hidden.gamer ? "gamer" : flavorPlayer.hidden.clutch ? "clutch" : flavorPlayer.hidden.workEthic > 70 ? "work" : "win";
+    rare.push({ name: flavorPlayer.name, note: expandedFlavorLine(context, flavorPlayer) });
+  }
 
   return {
     week,
@@ -1742,6 +1859,40 @@ function makeWeeklyPaper(week, games) {
     rivalry,
     playerStats
   };
+}
+
+
+function showFinalResultThenPaper() {
+  const last = latestStroudGame();
+  if (!last) {
+    showNewspaperPopup();
+    return;
+  }
+
+  const home = getTeam(last.homeId);
+  const away = getTeam(last.awayId);
+  const opponent = last.homeId === "team_stroud" ? away : home;
+  const stroudWon = (last.homeId === "team_stroud" && last.homeScore > last.awayScore)
+    || (last.awayId === "team_stroud" && last.awayScore > last.homeScore);
+
+  setModal(
+    "Final",
+    stroudWon ? "Tigers win" : "Tigers fall",
+    `
+      <div class="result-final">
+        <h2>${escapeHtml(home.name)} ${last.homeScore}<br>${escapeHtml(away.name)} ${last.awayScore}</h2>
+        <p class="muted">${escapeHtml(stroudResultText(last))}</p>
+        <p>${escapeHtml(stroudWon ? expandedFlavorLine(RIVALS.includes(opponent.name) ? "rivalry" : "win") : expandedFlavorLine("loss"))}</p>
+        <button id="viewPaperAfterFinalBtn" class="gold">View Friday Night Paper</button>
+      </div>
+    `
+  );
+
+  showModal();
+
+  document.getElementById("viewPaperAfterFinalBtn").addEventListener("click", () => {
+    setModal("Friday Night Paper", `Week ${game.paper?.week ?? ""} recap`, newspaperHtml());
+  });
 }
 
 function showNewspaperPopup() {
@@ -1932,17 +2083,36 @@ function teamLeaders() {
 /* ------------------------------ Playoffs etc ------------------------------ */
 
 function seedPlayoffs() {
-  const topTeams = rankTeams().slice(0, 16).map(team => getTeam(team.id));
-  const stroud = getTeam("team_stroud");
+  const qualifiers = [];
 
-  if (!topTeams.some(team => team.id === "team_stroud") && (stroud.record.wins >= 6 || stroud.record.districtWins >= 4)) {
-    topTeams[topTeams.length - 1] = stroud;
+  for (const district of Object.keys(DISTRICTS)) {
+    const districtTeams = game.teams
+      .filter(team => team.district === district)
+      .sort((a, b) =>
+        b.record.districtWins - a.record.districtWins
+        || b.record.wins - a.record.wins
+        || (b.record.pf - b.record.pa) - (a.record.pf - a.record.pa)
+        || b.power - a.power
+      )
+      .slice(0, 4);
+
+    qualifiers.push(...districtTeams);
   }
+
+  const rankings = rankTeams();
+  const seeded = qualifiers
+    .map(team => ({
+      team,
+      rankingScore: rankings.find(item => item.id === team.id)?.score || team.power
+    }))
+    .sort((a, b) => b.rankingScore - a.rankingScore)
+    .map(item => item.team)
+    .slice(0, 16);
 
   game.playoffBracket = [];
   for (let i = 0; i < 8; i++) {
     game.playoffBracket.push({
-      ...createGame(11, topTeams[i].id, topTeams[15 - i].id, false),
+      ...createGame(11, seeded[i].id, seeded[15 - i].id, false),
       playoff: true,
       label: "Round 1"
     });
@@ -1953,14 +2123,21 @@ function seedPlayoffs() {
   game.paper = {
     week: 11,
     headline: "Playoff Bracket Set",
-    body: "Sixteen teams remain. Four rounds. Single elimination. One state champion.",
+    body: "Sixteen teams remain. Four rounds. Single elimination. One state champion. Not everyone got in.",
     topPerformers: [],
-    around: [],
+    around: game.playoffBracket.map(item => ({
+      home: getTeam(item.homeId).name,
+      away: getTeam(item.awayId).name,
+      homeScore: "-",
+      awayScore: "-",
+      district: false
+    })),
     rankings: rankTeams().slice(0, 10),
     leaders: stateLeaders(),
-    rare: [],
+    rare: [{ name: "Selection Sunday", note: "The bracket is set. Top four from each district are alive." }],
     injuries: [],
-    gameStats: null
+    gameStats: null,
+    playerStats: []
   };
 }
 
@@ -2261,6 +2438,191 @@ async function loadCloud() {
   }
 }
 
+
+/* ------------------------------ Menu and Hub ------------------------------ */
+
+function openMainMenu() {
+  const panel = document.getElementById("menuPanel");
+  panel.innerHTML = `
+    <div class="split">
+      <h3>HS Football GM</h3>
+      <button id="closeMenuBtn" class="secondary" style="width:auto">Close</button>
+    </div>
+    <p class="muted small">${BUILD_VERSION}</p>
+
+    <div class="menu-section-title">Program</div>
+    ${menuButton("dashboard", "Home Hub")}
+    ${menuButton("roster", "Roster")}
+    ${menuButton("depth", "Depth Chart")}
+    ${menuButton("schemes", "Schemes")}
+
+    <div class="menu-section-title">Season</div>
+    ${menuButton("newspaper", "Friday Night Paper")}
+    ${menuButton("schedule", "Schedule / Playoffs")}
+    ${menuButton("rankings", "Rankings & Leaders")}
+    ${menuButton("standings", "Standings")}
+    ${menuButton("awards", "Awards")}
+    ${menuButton("records", "Records & History")}
+
+    <div class="menu-section-title">Tools</div>
+    <button id="menuSaveBtn" class="secondary">Save Local</button>
+    <button id="menuCloudSaveBtn" class="secondary">Cloud Save</button>
+    <button id="menuCloudLoadBtn" class="secondary">Cloud Load</button>
+    <button id="menuExportBtn" class="secondary">Export Save</button>
+    <button id="menuSettingsBtn" class="secondary">Settings</button>
+    <button id="menuTutorialBtn" class="secondary">Tutorial</button>
+    <button id="menuNewBtn" class="danger">New Dynasty</button>
+  `;
+
+  document.getElementById("menuOverlay").classList.remove("hidden");
+
+  document.getElementById("closeMenuBtn").addEventListener("click", closeMainMenu);
+  document.querySelectorAll("[data-menu-view]").forEach(button => {
+    button.addEventListener("click", () => {
+      currentView = button.dataset.menuView;
+      closeMainMenu();
+      render();
+    });
+  });
+
+  document.getElementById("menuSaveBtn").addEventListener("click", () => { saveLocal(); closeMainMenu(); });
+  document.getElementById("menuCloudSaveBtn").addEventListener("click", () => { saveCloud(); closeMainMenu(); });
+  document.getElementById("menuCloudLoadBtn").addEventListener("click", () => { loadCloud(); closeMainMenu(); });
+  document.getElementById("menuExportBtn").addEventListener("click", () => { exportSave(); closeMainMenu(); });
+  document.getElementById("menuSettingsBtn").addEventListener("click", () => { closeMainMenu(); openSettings(); });
+  document.getElementById("menuTutorialBtn").addEventListener("click", () => { closeMainMenu(); openTutorial(); });
+  document.getElementById("menuNewBtn").addEventListener("click", () => { closeMainMenu(); confirmNewDynasty(); });
+}
+
+function closeMainMenu() {
+  document.getElementById("menuOverlay").classList.add("hidden");
+}
+
+function menuButton(viewKey, label) {
+  return `<button class="${currentView === viewKey ? "" : "secondary"}" data-menu-view="${viewKey}">${label}</button>`;
+}
+
+function latestStroudGame() {
+  const all = [...(game.schedule || []), ...(game.playoffBracket || [])];
+  return all.filter(item => item.played && (item.homeId === "team_stroud" || item.awayId === "team_stroud")).slice(-1)[0] || null;
+}
+
+function nextStroudGame() {
+  return game.schedule?.find(item => !item.played && (item.homeId === "team_stroud" || item.awayId === "team_stroud"))
+    || game.playoffBracket?.find(item => !item.played && (item.homeId === "team_stroud" || item.awayId === "team_stroud"))
+    || null;
+}
+
+function stroudResultText(scheduledGame) {
+  if (!scheduledGame) return "No result yet.";
+  const home = getTeam(scheduledGame.homeId);
+  const away = getTeam(scheduledGame.awayId);
+  const stroudWon = (scheduledGame.homeId === "team_stroud" && scheduledGame.homeScore > scheduledGame.awayScore)
+    || (scheduledGame.awayId === "team_stroud" && scheduledGame.awayScore > scheduledGame.homeScore);
+  const opponent = scheduledGame.homeId === "team_stroud" ? away : home;
+  const stroudScore = scheduledGame.homeId === "team_stroud" ? scheduledGame.homeScore : scheduledGame.awayScore;
+  const oppScore = scheduledGame.homeId === "team_stroud" ? scheduledGame.awayScore : scheduledGame.homeScore;
+  return `${stroudWon ? "W" : "L"} ${stroudScore}-${oppScore} vs ${opponent.name}`;
+}
+
+function hubTopStory() {
+  const stroud = getTeam("team_stroud");
+  const rank = rankTeams().find(item => item.id === "team_stroud")?.rank || "NR";
+  const last = latestStroudGame();
+  const streak = currentProgramStreak();
+
+  if (last) {
+    const won = (last.homeId === "team_stroud" && last.homeScore > last.awayScore) || (last.awayId === "team_stroud" && last.awayScore > last.homeScore);
+    const opp = getTeam(last.homeId === "team_stroud" ? last.awayId : last.homeId);
+    if (RIVALS.includes(opp.name) && won) return `${opp.name} rivalry win has the town buzzing. The trophy case has a little more shine this week.`;
+    if (won && Math.abs(last.homeScore - last.awayScore) <= 7) return `Stroud survived a tight one, and close wins are starting to feel like part of the Tigers' identity.`;
+    if (won) return `The Tigers keep stacking wins under Coach ${game.coachName || "Coach"}, and the state poll is starting to notice.`;
+    return `The Tigers are looking for answers after the loss, but the season still has room for a response.`;
+  }
+
+  if (stroud.record.wins === 0 && stroud.record.losses === 0) {
+    return `A new Stroud season begins with questions everywhere. The first job is simple: find the right kids for the right spots.`;
+  }
+
+  if (streak.count >= 3 && streak.type === "W") return `The Tigers have won ${streak.count} straight. Momentum is real in Stroud.`;
+  if (rank !== "NR" && rank <= 10) return `Stroud sits at #${rank} in the state rankings, a long way from the 2-8 season this staff inherited.`;
+  return `The Tigers continue building their identity week by week.`;
+}
+
+function currentProgramStreak() {
+  const games = [...(game.schedule || []), ...(game.playoffBracket || [])]
+    .filter(item => item.played && (item.homeId === "team_stroud" || item.awayId === "team_stroud"));
+  let count = 0;
+  let type = "";
+  for (let i = games.length - 1; i >= 0; i--) {
+    const item = games[i];
+    const won = (item.homeId === "team_stroud" && item.homeScore > item.awayScore) || (item.awayId === "team_stroud" && item.awayScore > item.homeScore);
+    const result = won ? "W" : "L";
+    if (!type) type = result;
+    if (result !== type) break;
+    count += 1;
+  }
+  return { type, count };
+}
+
+function programPulseText() {
+  const stroud = getTeam("team_stroud");
+  if (game.phase === "intro") return "The job is still new. First, learn the roster.";
+  if (game.phase === "playoffs") return "November football has arrived. Every mistake gets louder now.";
+  if (game.phase === "offseason") return "The offseason is where skinny freshmen become Friday night starters.";
+  if (stroud.record.wins >= 7) return "The town is paying attention. Stroud football has juice again.";
+  if (stroud.record.losses >= 5) return "Patience is being tested, but the staff is still building.";
+  return "The season is still taking shape. One Friday can change the whole mood.";
+}
+
+function upcomingStroudGames() {
+  return (game.schedule || [])
+    .filter(item => !item.played && (item.homeId === "team_stroud" || item.awayId === "team_stroud"))
+    .slice(0, 4)
+    .map(item => {
+      const opponent = getTeam(item.homeId === "team_stroud" ? item.awayId : item.homeId);
+      return { weekLabel: item.label || `Week ${item.week}`, opponent: `${opponent.name} ${opponent.mascot}` };
+    });
+}
+
+function expandedFlavorLine(context, player) {
+  const coach = game.coachName || "Coach";
+  const playerName = player?.name || "one Tiger";
+  const lines = {
+    win: [
+      `The Tigers looked comfortable late, and that matters in November football.`,
+      `Coach ${coach}'s sideline had a different energy after the final whistle.`,
+      `Players lingered on the field afterward, soaking in another Friday night win.`
+    ],
+    loss: [
+      `The film room will not be quiet this week.`,
+      `Stroud had moments, but not enough answers when the game tilted.`,
+      `The staff still believes the roster has more than it showed Friday.`
+    ],
+    rivalry: [
+      `Rivalry weeks carry a different weight, and the Tigers played like they knew it.`,
+      `The student section stayed loud long after the final whistle.`,
+      `A trophy game always leaves a mark on the season.`
+    ],
+    gamer: [
+      `${playerName} keeps showing up near the football when the Tigers need a play.`,
+      `Coaches are starting to trust ${playerName} in moments that do not show up cleanly on a ratings sheet.`,
+      `There is something about Friday nights that seems to bring out a different version of ${playerName}.`
+    ],
+    clutch: [
+      `${playerName} looked calm when the game got tight.`,
+      `Late-game pressure did not seem to bother ${playerName}.`,
+      `Some kids shrink when the lights get bright. ${playerName} did not.`
+    ],
+    work: [
+      `${playerName} was one of the last players off the practice field this week.`,
+      `The staff continues to mention ${playerName}'s habits when talking about development.`,
+      `Not every improvement is loud. ${playerName}'s week-to-week work is starting to show.`
+    ]
+  };
+  return choice(lines[context] || lines.win);
+}
+
 /* ---------------------------------- UI ---------------------------------- */
 
 function showLogin() {
@@ -2276,7 +2638,7 @@ function showApp() {
     ? `${currentUser.isAnonymous ? "Guest" : "Google"} save available`
     : "Local only";
   document.getElementById("prestigeLabel").textContent = game ? `Prestige: ${game.prestige ?? 25}` : "Prestige: --";
-  document.getElementById("topSubTitle").textContent = game?.coachName ? `Stroud Tigers • Coach ${game.coachName}` : "Stroud Tigers";
+  document.getElementById("topSubTitle").textContent = game?.coachName ? `Stroud Tigers • Coach ${game.coachName} • ${BUILD_VERSION}` : `Stroud Tigers • ${BUILD_VERSION}`;
 }
 
 function render() {
@@ -2368,24 +2730,53 @@ function ratingLine(label, value) {
 
 function renderDashboard() {
   const stroud = getTeam("team_stroud");
-  const nextGame =
-    game.schedule?.find(item => !item.played && (item.homeId === "team_stroud" || item.awayId === "team_stroud"))
-    || game.playoffBracket?.find(item => !item.played && (item.homeId === "team_stroud" || item.awayId === "team_stroud"));
-  const opponent = nextGame ? getTeam(nextGame.homeId === "team_stroud" ? nextGame.awayId : nextGame.homeId) : null;
+  const nextGame = nextStroudGame();
+  const lastGame = latestStroudGame();
+  const nextOpponent = nextGame ? getTeam(nextGame.homeId === "team_stroud" ? nextGame.awayId : nextGame.homeId) : null;
+  const rank = rankTeams().find(item => item.id === "team_stroud")?.rank || "NR";
+  const leaders = teamLeaders();
+  const streak = currentProgramStreak();
 
   document.getElementById("view").innerHTML = `
-    <div class="grid three">
-      <div class="card">
-        <h3>Stroud Tigers</h3>
-        <div class="grid two">
-          <div><span class="muted">Coach</span><br><strong>${escapeHtml(game.coachName || "New HC")}</strong></div>
-          <div><span class="muted">Record</span><br><strong>${stroud.record.wins}-${stroud.record.losses}</strong></div>
-          <div><span class="muted">District</span><br><strong>${stroud.record.districtWins}-${stroud.record.districtLosses}</strong></div>
-          <div><span class="muted">Phase</span><br><strong>${escapeHtml(game.phase)}</strong></div>
-          <div><span class="muted">Prestige</span><br><strong>${game.prestige ?? 25}</strong></div>
+    <div class="team-hub-grid">
+      <div class="hub-scoreboard">
+        <p class="pill gold">${BUILD_VERSION}</p>
+        <h1 class="hub-big-title">Stroud Tigers</h1>
+        <p class="muted">Coach ${escapeHtml(game.coachName || "New HC")} • ${game.year} Season</p>
+
+        <div class="grid four" style="margin-top:14px">
+          <div class="hub-metric"><span class="muted small">Record</span><br><strong>${stroud.record.wins}-${stroud.record.losses}</strong></div>
+          <div class="hub-metric"><span class="muted small">District</span><br><strong>${stroud.record.districtWins}-${stroud.record.districtLosses}</strong></div>
+          <div class="hub-metric"><span class="muted small">State Rank</span><br><strong>${rank === "NR" ? "NR" : "#" + rank}</strong></div>
+          <div class="hub-metric"><span class="muted small">Prestige</span><br><strong>${game.prestige ?? 25}</strong></div>
+        </div>
+
+        <div class="grid two" style="margin-top:14px">
+          <div class="card">
+            <h3>Next Game</h3>
+            ${nextOpponent ? `
+              <strong>${escapeHtml(nextOpponent.name)} ${escapeHtml(nextOpponent.mascot)}</strong>
+              <p class="muted">${escapeHtml(nextGame.label || `Week ${nextGame.week}`)} ${nextGame.district ? "• District" : ""}</p>
+              ${RIVALS.includes(nextOpponent.name) ? `<span class="pill gold">${escapeHtml(game.rivalries?.[nextOpponent.name]?.trophy || "Rivalry Game")}</span>` : ""}
+            ` : "<p class='muted'>No game scheduled.</p>"}
+          </div>
+          <div class="card">
+            <h3>Last Result</h3>
+            <strong>${escapeHtml(stroudResultText(lastGame))}</strong>
+            <p class="muted">${streak.count ? `${streak.type}${streak.count} current streak` : "Season has not started."}</p>
+          </div>
         </div>
       </div>
 
+      <div class="hub-story">
+        <h3>Top Story</h3>
+        <p>${escapeHtml(hubTopStory())}</p>
+        <hr>
+        <p><strong>Program Pulse:</strong> ${escapeHtml(programPulseText())}</p>
+      </div>
+    </div>
+
+    <div class="grid three" style="margin-top:14px">
       <div class="card">
         <h3>Team Snapshot</h3>
         ${ratingLine("Offense", stroud.offenseRating)}
@@ -2394,28 +2785,13 @@ function renderDashboard() {
       </div>
 
       <div class="card">
-        <h3>Next Game</h3>
-        ${opponent ? `
-          <strong>${escapeHtml(opponent.name)} ${escapeHtml(opponent.mascot)}</strong>
-          <p class="muted">${escapeHtml(nextGame.label || `Week ${nextGame.week}`)} ${nextGame.district ? "• District" : ""}</p>
-          ${ratingLine("Opponent", opponent.power)}
-        ` : "<p class='muted'>No game scheduled. Advance for next phase.</p>"}
-      </div>
-    </div>
-
-    <div class="grid two" style="margin-top:14px">
-      <div class="card">
-        <h3>Latest Paper</h3>
-        ${game.paper ? `
-          <h2 class="gold-text">${escapeHtml(game.paper.headline)}</h2>
-          <p class="muted">${escapeHtml(game.paper.body)}</p>
-          <button id="readPaperBtn" class="secondary">Read paper</button>
-        ` : "<p class='muted'>No paper yet.</p>"}
+        <h3>Top Tigers</h3>
+        ${leaders.map(item => `<div class="split" style="padding:6px 0;border-bottom:1px solid rgba(255,255,255,.07)"><span>${escapeHtml(item.label)}<br><strong>${escapeHtml(item.name)}</strong></span><span class="pill">${item.value}</span></div>`).join("")}
       </div>
 
       <div class="card">
-        <h3>State Top 10</h3>
-        ${rankingList(rankTeams().slice(0, 10))}
+        <h3>Upcoming</h3>
+        ${upcomingStroudGames().map(item => `<div class="split" style="padding:6px 0;border-bottom:1px solid rgba(255,255,255,.07)"><span>${escapeHtml(item.weekLabel)}</span><strong>${escapeHtml(item.opponent)}</strong></div>`).join("") || "<p class='muted'>No upcoming games.</p>"}
       </div>
     </div>
 
@@ -2433,11 +2809,6 @@ function renderDashboard() {
       </div>
     </div>
   `;
-
-  document.getElementById("readPaperBtn")?.addEventListener("click", () => {
-    currentView = "newspaper";
-    render();
-  });
 }
 
 function rankingList(teams) {
@@ -3362,6 +3733,7 @@ function adjustPrestigeForGame(scheduledGame) {
 
 /* ------------------------------- Listeners ------------------------------- */
 
+bindClick("mainMenuBtn", openMainMenu);
 bindClick("googleSignInBtn", async () => {
   try {
     await ensureFirebase();
@@ -3411,6 +3783,13 @@ bindClick("clearCacheBtn", () => {
 });
 
 bindClick("closeModalBtn", closeModal);
+
+const menuOverlayNode = document.getElementById("menuOverlay");
+if (menuOverlayNode) {
+  menuOverlayNode.addEventListener("click", event => {
+    if (event.target.id === "menuOverlay") closeMainMenu();
+  });
+}
 
 const modalBackdropNode = document.getElementById("modalBackdrop");
 if (modalBackdropNode) {
