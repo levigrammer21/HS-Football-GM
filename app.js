@@ -351,7 +351,7 @@ function createTeams() {
   }
 
   for (const name of EXTRA_TEAMS) {
-    teams.push(createTeam(name, "Rival"));
+    if (!teams.some(team => team.name === name)) teams.push(createTeam(name, "Rival"));
   }
 
   const stroud = teams.find(team => team.name === "Stroud");
@@ -852,6 +852,7 @@ function createSchedule() {
 
   for (const rival of RIVALS) {
     const opponent = teamByName(rival);
+    if (!opponent) continue;
     games.push(createGame(week, "team_stroud", opponent.id, false));
     week += 1;
   }
@@ -859,6 +860,7 @@ function createSchedule() {
   const districtOpponents = shuffle(DISTRICTS["2A-II-4"].filter(name => name !== "Stroud")).slice(0, 6);
   for (const opponentName of districtOpponents) {
     const opponent = teamByName(opponentName);
+    if (!opponent) continue;
     games.push(createGame(week, "team_stroud", opponent.id, true));
     week += 1;
   }
@@ -1347,7 +1349,7 @@ function weeklyPractice() {
 /* ----------------------------- Newspaper etc ----------------------------- */
 
 function makeWeeklyPaper(week, games) {
-  const stroudGame = games.find(item => item.homeId === "team_stroud" || item.awayId === "team_stroud");
+  const stroudGame = findStroudGame(games) || game.schedule?.find(item => item.week === week && item.played && (item.homeId === "team_stroud" || item.awayId === "team_stroud")) || game.playoffBracket?.find(item => item.played && (item.homeId === "team_stroud" || item.awayId === "team_stroud"));
   const around = games.filter(item => item !== stroudGame).slice(0, 8);
 
   let headline = `Week ${week} Around Class 2A-II`;
@@ -1850,6 +1852,8 @@ function migrateSave() {
   game.depth ||= emptyDepthChart();
   game.prestige ??= 25;
   game.rivalries ||= createRivalries();
+  ensureRivalTeams();
+  repairScheduleIfNeeded();
 
   for (const player of game.players) {
     player.offensePosition ||= recommendPositions(player)[0] || "WR";
@@ -1925,6 +1929,8 @@ function render() {
     return;
   }
 
+  ensureRivalTeams();
+  repairScheduleIfNeeded();
   showApp();
   renderNav();
 
@@ -2253,11 +2259,14 @@ function renderDepthSelect(side, position, slot, selectedId) {
         <option value="">Empty</option>
         ${game.players.map(candidate => `
           <option value="${candidate.id}" ${candidate.id === selectedId ? "selected" : ""}>
-            ${escapeHtml(candidate.name)} • ${candidate.grade} • ${formatHeight(candidate.height)} ${candidate.weight}
+            ${escapeHtml(depthOptionLabel(candidate, position))}
           </option>
         `).join("")}
       </select>
-      <span class="pill ${gradeClassName}" style="margin-top:5px">${grade}</span>
+      <div class="depth-player-mini">
+        <span class="pill ${gradeClassName}">Here: ${grade}</span>
+      </div>
+      ${player ? `<div class="depth-context">${escapeHtml(playerCurrentRoleText(player))}<br>${escapeHtml(currentAssignedGradeText(player))}</div>` : ""}
     </div>
   `;
 }
@@ -2628,6 +2637,87 @@ function saveLocalSilent() {
 }
 
 
+
+
+function ensureRivalTeams() {
+  if (!game?.teams) return;
+
+  for (const name of EXTRA_TEAMS) {
+    if (!game.teams.some(team => team.name === name)) {
+      game.teams.push(createTeam(name, "Rival"));
+    }
+  }
+
+  for (const team of game.teams) {
+    if (MASCOTS[team.name]) team.mascot = MASCOTS[team.name];
+  }
+}
+
+function repairScheduleIfNeeded() {
+  if (!game || game.phase !== "regular") return;
+  if (!game.schedule?.length) return;
+
+  const stroudGames = game.schedule.filter(item => item.homeId === "team_stroud" || item.awayId === "team_stroud");
+  const opponentNames = stroudGames.map(item => {
+    const opponentId = item.homeId === "team_stroud" ? item.awayId : item.homeId;
+    return getTeam(opponentId)?.name;
+  });
+
+  const hasCurrentRivals = RIVALS.every(name => opponentNames.includes(name));
+  const hasOldRivals = opponentNames.includes("Depew") || opponentNames.includes("Davenport");
+
+  if (!hasCurrentRivals || hasOldRivals || stroudGames.length < 10) {
+    game.schedule = createSchedule();
+    toast("Schedule repaired for Chandler, Bristow, Prague, and Cushing.");
+  }
+}
+
+/* ----------------------------- UI small helpers ---------------------------- */
+
+function confirmNewDynasty() {
+  if (!game) {
+    createNewDynastyIntro();
+    return;
+  }
+
+  const ok = window.confirm(
+    "Start a new dynasty? This will replace the current local dynasty unless you export or cloud save it first."
+  );
+
+  if (ok) createNewDynastyIntro();
+}
+
+function playerCurrentRoleText(player) {
+  if (!player) return "";
+
+  const offenseText = player.offensePosition ? `Off ${player.offensePosition}` : "Off -";
+  const defenseText = player.defensePosition ? `Def ${player.defensePosition}` : "Def -";
+  const specialText = player.specialPosition ? `ST ${player.specialPosition}` : "ST -";
+
+  return `${offenseText} / ${defenseText} / ${specialText}`;
+}
+
+function currentAssignedGradeText(player) {
+  if (!player) return "";
+
+  const grades = [];
+  if (player.offensePosition) grades.push(`Off ${player.offensePosition}: ${letterGrade(positionFit(player, player.offensePosition))}`);
+  if (player.defensePosition) grades.push(`Def ${player.defensePosition}: ${letterGrade(positionFit(player, player.defensePosition))}`);
+  if (player.specialPosition) grades.push(`ST ${player.specialPosition}: ${letterGrade(positionFit(player, player.specialPosition))}`);
+
+  return grades.join(" • ");
+}
+
+function depthOptionLabel(player, position) {
+  const projected = letterGrade(positionFit(player, position));
+  const current = playerCurrentRoleText(player);
+  return `${player.name} • ${player.grade} • ${formatHeight(player.height)} ${player.weight} • ${current} • Here: ${projected}`;
+}
+
+function findStroudGame(games) {
+  return games.find(item => item.homeId === "team_stroud" || item.awayId === "team_stroud");
+}
+
 /* -------------------------- Settings and tutorial ------------------------- */
 
 function openSettings() {
@@ -2850,8 +2940,8 @@ document.getElementById("guestSignInBtn").addEventListener("click", async () => 
   }
 });
 
-document.getElementById("newDynastyBtn").addEventListener("click", createNewDynastyIntro);
-document.getElementById("topNewDynastyBtn").addEventListener("click", createNewDynastyIntro);
+document.getElementById("newDynastyBtn").addEventListener("click", confirmNewDynasty);
+document.getElementById("topNewDynastyBtn").addEventListener("click", confirmNewDynasty);
 document.getElementById("advanceWeekBtn").addEventListener("click", advanceWeek);
 
 document.getElementById("topSaveLocalBtn").addEventListener("click", saveLocal);
