@@ -1,6 +1,6 @@
 
 "use strict";
-const BUILD_VERSION = "v0.0.15-alpha";
+const BUILD_VERSION = "v0.0.16-alpha";
 const BUILD_DATE = "2026-06-12";
 
 function reportFatalError(error) {
@@ -1163,70 +1163,64 @@ function confirmNewDynasty() {
 }
 
 
+
 function playerDepthRoles(playerId) {
   const roles = [];
   if (!game?.depth || !playerId) return roles;
-
   for (const [side, positions] of Object.entries(game.depth)) {
     for (const [position, slots] of Object.entries(positions)) {
       if (slots[0] === playerId) roles.push({ type: "Starter", side, position });
       if (slots[1] === playerId) roles.push({ type: "Backup", side, position });
     }
   }
-
   return roles;
 }
-
+function rolePositionOnly(playerId, side) {
+  const roles = playerDepthRoles(playerId).filter(role => role.side === side);
+  if (!roles.length) return "JV";
+  return roles.map(role => role.position).join("/");
+}
+function roleFullText(playerId, side) {
+  const roles = playerDepthRoles(playerId).filter(role => role.side === side);
+  if (!roles.length) return "JV";
+  return roles.map(role => `${role.type} ${role.position}`).join(" / ");
+}
 function playerVarsityStatus(playerId) {
   const roles = playerDepthRoles(playerId);
   if (!roles.length) return "JV";
   return roles.map(role => `${role.type} ${role.position}`).join(" / ");
 }
-
 function playerSimpleStatus(playerId) {
   const roles = playerDepthRoles(playerId);
   if (!roles.length) return "JV";
   if (roles.some(role => role.type === "Starter")) return "STARTER";
   return "BACKUP";
 }
-
 function playerStatusClass(playerId) {
   const status = playerSimpleStatus(playerId);
   if (status === "STARTER") return "starter";
   if (status === "BACKUP") return "backup";
   return "jv";
 }
-
 function playerStatusPill(playerId) {
   const status = playerSimpleStatus(playerId);
   return `<span class="status-pill ${playerStatusClass(playerId)}">${status}</span>`;
 }
-
 function varsityCounts() {
   const varsityIds = new Set();
   if (!game?.depth) return { varsity: 0, jv: game?.players?.length || 0 };
-
   for (const side of Object.values(game.depth)) {
     for (const slots of Object.values(side)) {
       if (slots[0]) varsityIds.add(slots[0]);
       if (slots[1]) varsityIds.add(slots[1]);
     }
   }
-
-  return {
-    varsity: varsityIds.size,
-    jv: Math.max(0, game.players.length - varsityIds.size)
-  };
+  return { varsity: varsityIds.size, jv: Math.max(0, game.players.length - varsityIds.size) };
 }
-
-function rosterRoleForSide(playerId, side) {
-  const roles = playerDepthRoles(playerId).filter(role => role.side === side);
-  if (!roles.length) return "JV";
-  return roles.map(role => `${role.type} ${role.position}`).join(" / ");
-}
-
+function rosterRoleForSide(playerId, side) { return roleFullText(playerId, side); }
+function depthDropdownRoles(player) { return `${rolePositionOnly(player.id, "offense")}, ${rolePositionOnly(player.id, "defense")}`; }
 function positionLabelForDropdown(player, position) {
-  return `${player.name} • ${player.grade} • ${formatHeight(player.height)} ${player.weight} • ${playerSimpleStatus(player.id)} • Here: ${letterGrade(positionFit(player, position))}`;
+  return `${player.name} • ${player.grade} • ${formatHeight(player.height)} ${player.weight} • ${depthDropdownRoles(player)} • Here: ${letterGrade(positionFit(player, position))}`;
 }
 
 function playerCurrentRoleText(player) {
@@ -2897,7 +2891,6 @@ function rankingList(teams) {
 
 function renderRoster() {
   const counts = varsityCounts();
-
   document.getElementById("view").innerHTML = `
     <div class="card">
       <div class="split">
@@ -2908,94 +2901,56 @@ function renderRoster() {
           <span class="pill">${game.players.length} players</span>
         </div>
       </div>
-
-      <p class="muted small">
-        Offense/Defense columns show actual varsity depth-chart roles. If a player is not in the two-deep, he shows JV.
-      </p>
-
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Status</th>
-              <th>Offense</th>
-              <th>Defense</th>
-              <th>ST</th>
-              <th>Yr</th>
-              <th>Ht</th>
-              <th>Wt</th>
-              <th>Spd</th>
-              <th>Str</th>
-              <th>Agi</th>
-              <th>Blk</th>
-              <th>Tkl</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${game.players.map(player => `
-              <tr>
-                <td><span class="player-name" data-player-id="${player.id}">${escapeHtml(player.name)}</span></td>
-                <td>${playerStatusPill(player.id)}</td>
-                <td>${escapeHtml(rosterRoleForSide(player.id, "offense"))}</td>
-                <td>${escapeHtml(rosterRoleForSide(player.id, "defense"))}</td>
-                <td>${escapeHtml(rosterRoleForSide(player.id, "special"))}</td>
-                <td>${player.grade}</td>
-                <td>${formatHeight(player.height)}</td>
-                <td>${player.weight}</td>
-                <td>${player.stats.speed}</td>
-                <td>${player.stats.strength}</td>
-                <td>${player.stats.agility}</td>
-                <td>${player.stats.blocking}</td>
-                <td>${player.stats.tackling}</td>
-              </tr>
-            `).join("")}
-          </tbody>
-        </table>
+      <p class="muted small">Roles shown here are actual varsity depth-chart roles. If a player is not in the two-deep, he is JV.</p>
+      <div class="roster-card-list">
+        ${game.players.map(player => `
+          <div class="roster-player-card">
+            <div class="roster-player-top">
+              <div>
+                <div class="roster-player-name" data-player-id="${player.id}">${escapeHtml(player.name)}</div>
+                <div class="muted small">${player.grade} • ${formatHeight(player.height)} • ${player.weight} lbs</div>
+              </div>
+              ${playerStatusPill(player.id)}
+            </div>
+            <div class="roster-role-row">
+              <span class="pill">O: ${escapeHtml(rolePositionOnly(player.id, "offense"))}</span>
+              <span class="pill">D: ${escapeHtml(rolePositionOnly(player.id, "defense"))}</span>
+              <span class="pill">ST: ${escapeHtml(rolePositionOnly(player.id, "special"))}</span>
+            </div>
+            <div class="roster-stat-row">
+              <div class="roster-stat-box"><span>Speed</span>${player.stats.speed}</div>
+              <div class="roster-stat-box"><span>Strength</span>${player.stats.strength}</div>
+              <div class="roster-stat-box"><span>Agility</span>${player.stats.agility}</div>
+              <div class="roster-stat-box"><span>Blocking</span>${player.stats.blocking}</div>
+              <div class="roster-stat-box"><span>Tackling</span>${player.stats.tackling}</div>
+              <div class="roster-stat-box"><span>Coverage</span>${player.stats.coverage}</div>
+              <div class="roster-stat-box"><span>Carry</span>${player.stats.carry}</div>
+              <div class="roster-stat-box"><span>Arm</span>${player.stats.armStrength}</div>
+            </div>
+          </div>
+        `).join("")}
       </div>
-    </div>
-  `;
-
+    </div>`;
   document.querySelectorAll("[data-player-id]").forEach(node => {
     node.addEventListener("click", () => openPlayerCard(Number(node.dataset.playerId)));
   });
 }
 
-
-function getDepthSortMode() {
-  return window.depthSortMode || "best";
-}
-
-function setDepthSortMode(mode) {
-  window.depthSortMode = mode === "name" ? "name" : "best";
-}
-
+function getDepthSortMode() { return window.depthSortMode || "best"; }
+function setDepthSortMode(mode) { window.depthSortMode = mode === "name" ? "name" : "best"; }
 function sortedPlayersForDepth(position) {
   const players = [...game.players];
-
-  if (getDepthSortMode() === "name") {
-    return players.sort((a, b) => a.name.localeCompare(b.name));
-  }
-
+  if (getDepthSortMode() === "name") return players.sort((a, b) => a.name.localeCompare(b.name));
   return players.sort((a, b) => {
     const fitDiff = positionFit(b, position) - positionFit(a, position);
     if (fitDiff !== 0) return fitDiff;
     return a.name.localeCompare(b.name);
   });
 }
-
+function visibleOffensePositions() { return requiredOffensePositions(); }
 
 function renderDepth() {
-  const offenseReq = requiredOffensePositions();
-  const offenseBackupReq = requiredBackupOffensePositions();
-  const tabs = [
-    ["offense", "Offense"],
-    ["defense", "Defense"],
-    ["special", "Special Teams"]
-  ];
-
   const activeSide = window.currentDepthSide || "offense";
-
   document.getElementById("view").innerHTML = `
     <div class="depth-toolbar">
       <button id="fillDepthBtn">Fill Staff Guess</button>
@@ -3006,35 +2961,24 @@ function renderDepth() {
         <option value="best">Best Here</option>
         <option value="name">Name</option>
       </select>
+      <span class="depth-sort-note">Dropdown labels show O/D role or JV, plus projected grade here.</span>
     </div>
-
     <div class="depth-tabs">
-      ${tabs.map(([side, label]) => `<button data-depth-tab="${side}" class="${activeSide === side ? "active" : ""}">${label}</button>`).join("")}
+      ${[["offense","Offense"],["defense","Defense"],["special","Special Teams"]].map(([side,label]) => `<button data-depth-tab="${side}" class="${activeSide === side ? "active" : ""}">${label}</button>`).join("")}
     </div>
-
     <div class="card depth-table-card">
-      ${activeSide === "offense" ? renderDepthTable("offense", OFFENSE_POSITIONS, offenseReq, offenseBackupReq) : ""}
-      ${activeSide === "defense" ? renderDepthTable("defense", DEFENSE_POSITIONS, DEFENSE_POSITIONS, DEFENSE_POSITIONS) : ""}
-      ${activeSide === "special" ? renderDepthTable("special", SPECIAL_POSITIONS, SPECIAL_POSITIONS, SPECIAL_POSITIONS) : ""}
-    </div>
-  `;
-
+      ${activeSide === "offense" ? renderDepthTable("offense", visibleOffensePositions()) : ""}
+      ${activeSide === "defense" ? renderDepthTable("defense", DEFENSE_POSITIONS) : ""}
+      ${activeSide === "special" ? renderDepthTable("special", SPECIAL_POSITIONS) : ""}
+    </div>`;
   const depthSortSelect = document.getElementById("depthSortSelect");
   if (depthSortSelect) {
     depthSortSelect.value = getDepthSortMode();
-    depthSortSelect.addEventListener("change", () => {
-      setDepthSortMode(depthSortSelect.value);
-      renderDepth();
-    });
+    depthSortSelect.addEventListener("change", () => { setDepthSortMode(depthSortSelect.value); renderDepth(); });
   }
-
   document.querySelectorAll("[data-depth-tab]").forEach(button => {
-    button.addEventListener("click", () => {
-      window.currentDepthSide = button.dataset.depthTab;
-      renderDepth();
-    });
+    button.addEventListener("click", () => { window.currentDepthSide = button.dataset.depthTab; renderDepth(); });
   });
-
   document.querySelectorAll("[data-depth-select]").forEach(select => {
     select.addEventListener("change", () => {
       setDepthPlayer(select.dataset.side, select.dataset.position, Number(select.dataset.slot), select.value);
@@ -3042,14 +2986,12 @@ function renderDepth() {
       renderDepth();
     });
   });
-
   document.getElementById("fillDepthBtn").addEventListener("click", () => {
     game.depth = staffGuessDepthChart();
     recalculateTeamRatings();
     saveLocalSilent();
     renderDepth();
   });
-
   document.getElementById("clearDepthBtn").addEventListener("click", () => {
     game.depth = emptyDepthChart();
     recalculateTeamRatings();
@@ -3058,46 +3000,25 @@ function renderDepth() {
   });
 }
 
-function renderDepthTable(side, positions, requiredStarters, requiredBackups) {
-  return `
-    <h3>${side === "offense" ? "Offense" : side === "defense" ? "Defense" : "Special Teams"}</h3>
+function renderDepthTable(side, positions) {
+  return `<h3>${side === "offense" ? "Offense" : side === "defense" ? "Defense" : "Special Teams"}</h3>
     <table class="depth-table">
-      <thead>
-        <tr>
-          <th>Pos</th>
-          <th>Starter</th>
-          <th>Backup</th>
-          <th>Notes</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${positions.map(position => renderDepthTableRow(side, position, requiredStarters.includes(position), requiredBackups.includes(position))).join("")}
-      </tbody>
-    </table>
-  `;
+      <thead><tr><th>Pos</th><th>Starter</th><th>Backup</th><th>Notes</th></tr></thead>
+      <tbody>${positions.map(position => renderDepthTableRow(side, position)).join("")}</tbody>
+    </table>`;
 }
-
-function renderDepthTableRow(side, position, starterRequired, backupRequired) {
+function renderDepthTableRow(side, position) {
   const slots = game.depth[side][position];
-
-  return `
-    <tr>
-      <td>
-        <strong class="gold-text">${position}</strong><br>
-        ${starterRequired ? `<span class="pill good">Starter required</span>` : `<span class="pill">Situational</span>`}
-        ${backupRequired ? `<br><span class="pill blue">Backup required</span>` : ""}
-      </td>
-      <td>${renderDepthSelect(side, position, 0, slots[0])}</td>
-      <td>${renderDepthSelect(side, position, 1, slots[1])}</td>
-      <td class="muted small">${depthPositionNote(side, position)}</td>
-    </tr>
-  `;
+  return `<tr>
+    <td><div class="depth-position-label">${position}</div><span class="pill good">Starter required</span><br><span class="pill blue">Backup required</span></td>
+    <td>${renderDepthSelect(side, position, 0, slots[0])}</td>
+    <td>${renderDepthSelect(side, position, 1, slots[1])}</td>
+    <td class="muted small">${depthPositionNote(side, position)}</td>
+  </tr>`;
 }
-
 function depthPositionNote(side, position) {
   const scheme = game.settings.offense;
   const pos = normalizePosition(position);
-
   if (side === "offense") {
     if (scheme === "Wing-T" && position === "FB") return "Engine of the offense. Carries, lead blocks, sells fakes.";
     if (scheme === "Wing-T" && ["LG", "RG"].includes(position)) return "Pulling guards matter. Slow guards kill the Wing-T.";
@@ -3105,35 +3026,25 @@ function depthPositionNote(side, position) {
     if (["Flexbone", "Wishbone", "Option"].includes(scheme) && position === "QB") return "Decision-making and ball handling matter more than pure arm.";
     if (pos === "WR" && ["Wing-T", "Flexbone", "Wishbone"].includes(scheme)) return "Mostly blocks and decoys. Great WRs are less impactful here.";
   }
-
   if (side === "defense") {
     if (["CB1", "CB2"].includes(position)) return "Bad corners get punished by passing teams.";
     if (["FS", "SS"].includes(position)) return "Safeties clean up mistakes and matter against spread teams.";
     if (["DT1", "DT2", "LE", "RE"].includes(position)) return "Controls the line. Huge against run-heavy teams.";
   }
-
   return "Only starter and backup enter games. Everyone else is JV until placed in the two-deep.";
 }
-
 function renderDepthSelect(side, position, slot, selectedId) {
   const player = getPlayer(selectedId);
   const grade = player ? letterGrade(positionFit(player, position)) : "-";
   const gradeClassName = player ? gradeClass(positionFit(player, position)) : "";
-
-  return `
-    <div>
-      <select data-depth-select="1" data-side="${side}" data-position="${position}" data-slot="${slot}">
-        <option value="">Empty</option>
-        ${sortedPlayersForDepth(position).map(candidate => `
-          <option value="${candidate.id}" ${candidate.id === selectedId ? "selected" : ""}>
-            ${escapeHtml(positionLabelForDropdown(candidate, position))}
-          </option>
-        `).join("")}
-      </select>
-      <div class="depth-player-mini"><span class="pill ${gradeClassName}">Here: ${grade}</span></div>
-      ${player ? `<div class="depth-context">${playerStatusPill(player.id)}<br>${escapeHtml(playerVarsityStatus(player.id))}</div>` : ""}
-    </div>
-  `;
+  return `<div>
+    <select data-depth-select="1" data-side="${side}" data-position="${position}" data-slot="${slot}">
+      <option value="">Empty</option>
+      ${sortedPlayersForDepth(position).map(candidate => `<option value="${candidate.id}" ${candidate.id === selectedId ? "selected" : ""}>${escapeHtml(positionLabelForDropdown(candidate, position))}</option>`).join("")}
+    </select>
+    <div class="depth-player-mini"><span class="pill ${gradeClassName}">Here: ${grade}</span></div>
+    ${player ? `<div class="depth-context">${playerStatusPill(player.id)}<br>O: ${escapeHtml(rolePositionOnly(player.id, "offense"))} • D: ${escapeHtml(rolePositionOnly(player.id, "defense"))}</div>` : ""}
+  </div>`;
 }
 
 function renderSchemes() {
