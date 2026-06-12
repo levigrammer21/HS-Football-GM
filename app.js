@@ -1,6 +1,6 @@
 
 "use strict";
-const BUILD_VERSION = "v0.0.8-alpha";
+const BUILD_VERSION = "v0.0.9-alpha";
 const BUILD_DATE = "2026-06-12";
 
 function reportFatalError(error) {
@@ -182,6 +182,42 @@ const SCHEME_PROFILES = {
   "Flexbone": { runPass: "88% run / 12% pass", critical: ["QB", "FB", "RB", "RB", "OL"], text: "Flexbone is option football turned all the way up. It needs a fearless QB, a bruising fullback, quick slots, and offensive linemen who can reach and cut angles." },
   "Wishbone": { runPass: "82% run / 18% pass", critical: ["QB", "FB", "RB", "RB", "OL"], text: "Wishbone pounds the ball with three backs and asks the QB to make clean decisions. It is not pretty, but with the right kids it drains the clock and breaks wills." }
 };
+
+const SCHEME_DEPTH_REQUIREMENTS = {
+  "Spread": {
+    offense: ["QB", "RB", "WR1", "WR2", "WR3", "TE", "LT", "LG", "C", "RG", "RT"],
+    backups: ["QB", "RB", "WR1", "WR2", "WR3", "TE", "LT", "LG", "C", "RG", "RT"]
+  },
+  "Air Raid": {
+    offense: ["QB", "RB", "WR1", "WR2", "WR3", "TE", "LT", "LG", "C", "RG", "RT"],
+    backups: ["QB", "RB", "WR1", "WR2", "WR3", "TE", "LT", "LG", "C", "RG", "RT"]
+  },
+  "Pro Style": {
+    offense: ["QB", "RB", "FB", "WR1", "WR2", "TE", "LT", "LG", "C", "RG", "RT"],
+    backups: ["QB", "RB", "FB", "WR1", "WR2", "TE", "LT", "LG", "C", "RG", "RT"]
+  },
+  "Option": {
+    offense: ["QB", "RB", "FB", "WR1", "WR2", "TE", "LT", "LG", "C", "RG", "RT"],
+    backups: ["QB", "RB", "FB", "WR1", "WR2", "TE", "LT", "LG", "C", "RG", "RT"]
+  },
+  "Wing-T": {
+    offense: ["QB", "FB", "RB", "WR1", "WR2", "TE", "LT", "LG", "C", "RG", "RT"],
+    backups: ["QB", "FB", "RB", "WR1", "WR2", "TE", "LT", "LG", "C", "RG", "RT"]
+  },
+  "Power-I": {
+    offense: ["QB", "RB", "FB", "WR1", "WR2", "TE", "LT", "LG", "C", "RG", "RT"],
+    backups: ["QB", "RB", "FB", "WR1", "WR2", "TE", "LT", "LG", "C", "RG", "RT"]
+  },
+  "Flexbone": {
+    offense: ["QB", "FB", "RB", "WR1", "WR2", "TE", "LT", "LG", "C", "RG", "RT"],
+    backups: ["QB", "FB", "RB", "WR1", "WR2", "TE", "LT", "LG", "C", "RG", "RT"]
+  },
+  "Wishbone": {
+    offense: ["QB", "FB", "RB", "WR1", "WR2", "TE", "LT", "LG", "C", "RG", "RT"],
+    backups: ["QB", "FB", "RB", "WR1", "WR2", "TE", "LT", "LG", "C", "RG", "RT"]
+  }
+};
+
 const DEFENSE_PROFILES = {
   "4-3": { critical: ["DL", "DL", "LB", "LB", "S"], text: "Balanced and dependable. Needs linebackers who can clean up and defensive linemen who do not get moved." },
   "3-4": { critical: ["DL", "LB", "LB", "LB", "CB"], text: "Linebackers are the stars. Great if you have tough, flexible kids who can blitz, scrape, and cover." },
@@ -476,25 +512,51 @@ function uniqueName() {
   return name;
 }
 
-function physicalBuild() {
-  const height = clamp(Math.round(bell(70, 3.1, 63, 78)), 63, 78);
-  const bodyType = choice(["thin", "average", "average", "sturdy", "big", "big", "huge"]);
+function physicalBuild(grade = "FR") {
+  const heightBase = { FR: 68.5, SO: 69.4, JR: 70.2, SR: 70.8 }[grade] || 69;
+  const height = clamp(Math.round(bell(heightBase, 2.6, 62, 78)), 62, 78);
 
+  const bodyType = choice(["thin", "average", "average", "average", "sturdy", "big"]);
   let weight;
-  if (height <= 64) weight = rand(125, 200);
-  else if (height < 68) weight = rand(130, 215);
-  else if (height < 72) weight = rand(140, 240);
-  else if (height < 75) weight = rand(155, 270);
-  else weight = rand(170, 300);
 
-  if (bodyType === "thin") weight -= rand(10, 35);
-  if (bodyType === "sturdy") weight += rand(10, 28);
-  if (bodyType === "big") weight += rand(25, 55);
-  if (bodyType === "huge") weight += rand(50, 85);
+  if (grade === "FR") {
+    if (height <= 64) weight = rand(118, 155);
+    else if (height < 68) weight = rand(122, 170);
+    else if (height < 72) weight = rand(132, 190);
+    else if (height < 75) weight = rand(145, 210);
+    else weight = rand(160, 225);
+  } else if (grade === "SO") {
+    if (height <= 64) weight = rand(122, 165);
+    else if (height < 68) weight = rand(130, 185);
+    else if (height < 72) weight = rand(140, 210);
+    else if (height < 75) weight = rand(155, 235);
+    else weight = rand(170, 255);
+  } else if (grade === "JR") {
+    if (height <= 64) weight = rand(128, 180);
+    else if (height < 68) weight = rand(138, 200);
+    else if (height < 72) weight = rand(150, 230);
+    else if (height < 75) weight = rand(165, 265);
+    else weight = rand(180, 290);
+  } else {
+    if (height <= 64) weight = rand(130, 190);
+    else if (height < 68) weight = rand(145, 215);
+    else if (height < 72) weight = rand(160, 250);
+    else if (height < 75) weight = rand(175, 285);
+    else weight = rand(190, 315);
+  }
+
+  if (bodyType === "thin") weight -= rand(8, 24);
+  if (bodyType === "sturdy") weight += rand(8, 20);
+  if (bodyType === "big") weight += rand(15, grade === "FR" ? 32 : 48);
+
+  // True freak freshmen can happen, but they should feel rare.
+  if (grade === "FR" && Math.random() < 0.035) {
+    weight += rand(25, 55);
+  }
 
   return {
     height,
-    weight: clamp(weight, 120, 330)
+    weight: clamp(weight, 112, grade === "FR" ? 265 : 330)
   };
 }
 
@@ -533,7 +595,7 @@ function athleticCaps(height, weight) {
 }
 
 function createPlayer(grade = "FR") {
-  const build = physicalBuild();
+  const build = physicalBuild(grade);
   const caps = athleticCaps(build.height, build.weight);
   const ageBoost = { FR: 0, SO: 5, JR: 9, SR: 13 }[grade] || 0;
 
@@ -1018,10 +1080,36 @@ function recalculateTeamRatings() {
 }
 
 
+
+function requiredOffensePositions() {
+  return SCHEME_DEPTH_REQUIREMENTS[game.settings.offense]?.offense || OFFENSE_POSITIONS;
+}
+
+function requiredBackupOffensePositions() {
+  return SCHEME_DEPTH_REQUIREMENTS[game.settings.offense]?.backups || OFFENSE_POSITIONS;
+}
+
+function formatStatKey(key) {
+  const labels = {
+    passYards: "Pass Yds",
+    passTD: "Pass TD",
+    rushYards: "Rush Yds",
+    rushTD: "Rush TD",
+    recYards: "Rec Yds",
+    catches: "Rec",
+    tackles: "Tackles",
+    sacks: "Sacks",
+    interceptions: "INT"
+  };
+  return labels[key] || key;
+}
+
 function validateDepthChartForGame() {
   const missing = [];
-  for (const position of OFFENSE_POSITIONS) {
+  for (const position of requiredOffensePositions()) {
     if (!game.depth.offense[position][0]) missing.push(`Offense ${position} starter`);
+  }
+  for (const position of requiredBackupOffensePositions()) {
     if (!game.depth.offense[position][1]) missing.push(`Offense ${position} backup`);
   }
   for (const position of DEFENSE_POSITIONS) {
@@ -1209,23 +1297,30 @@ function simulateScore(home, away) {
 function simulateBoxScore(team, opponent, points) {
   const profile = SCHEME_PROFILES[team.offense] || SCHEME_PROFILES["Pro Style"];
   const passNumber = Number(profile.runPass.match(/(\d+)% pass/)?.[1] || 50);
-  const passRate = clamp(passNumber / 100 + rand(-6, 6) / 100, 0.08, 0.85);
+  const passRate = clamp(passNumber / 100 + rand(-5, 5) / 100, 0.1, 0.82);
   const matchup = schemeMatchupRating(team, opponent);
-  const totalYards = clamp(185 + points * 6.5 + matchup * 4.8 + bell(0, 42, -95, 125), 45, 640);
 
-  let passing = Math.round(totalYards * passRate + bell(0, 22, -55, 55));
+  // High school totals should usually live in the 180-420 range.
+  // 500+ should be a rare monster night, not a normal Wing-T result.
+  const totalYards = clamp(
+    165 + points * 4.25 + matchup * 3.6 + bell(0, 34, -80, 95),
+    45,
+    520
+  );
+
+  let passing = Math.round(totalYards * passRate + bell(0, 17, -45, 45));
   let rushing = Math.round(totalYards - passing);
 
-  if (points >= 55 && team.power - opponent.power > 28) {
-    if (passRate < 0.45) rushing += rand(45, 130);
-    else passing += rand(25, 90);
+  passing = clamp(passing, 0, 380);
+  rushing = clamp(rushing, 0, 360);
+
+  // Rare state-record type outburst.
+  if (Math.random() < 0.012 && points >= 45 && passRate < 0.45) {
+    rushing = clamp(rushing + rand(45, 95), 0, 450);
   }
 
-  passing = clamp(passing, 0, 460);
-  rushing = clamp(rushing, 0, 470);
-
-  const passTD = clamp(Math.round(points * passRate / 7 + rand(-1, 1)), 0, 7);
-  const rushTD = clamp(Math.floor(points / 7) - passTD, 0, 8);
+  const passTD = clamp(Math.round(points * passRate / 7 + rand(-1, 1)), 0, 6);
+  const rushTD = clamp(Math.floor(points / 7) - passTD, 0, 7);
 
   return {
     passYards: passing,
@@ -1377,6 +1472,17 @@ function addGameStatLine(lines, player, stats) {
   lines.push({ player: player.name, grade: player.grade, stats });
 }
 
+
+function rushingSharesForScheme() {
+  const scheme = game.settings.offense;
+  if (scheme === "Wing-T") return { qb: 0.08, rb: 0.28, fb: 0.34, wr: 0.10, other: 0.20 };
+  if (["Flexbone", "Wishbone", "Option"].includes(scheme)) return { qb: 0.24, rb: 0.26, fb: 0.25, wr: 0.06, other: 0.19 };
+  if (scheme === "Power-I") return { qb: 0.03, rb: 0.52, fb: 0.22, wr: 0.02, other: 0.21 };
+  if (scheme === "Air Raid") return { qb: 0.06, rb: 0.68, fb: 0.02, wr: 0.04, other: 0.20 };
+  if (scheme === "Spread") return { qb: 0.16, rb: 0.60, fb: 0.02, wr: 0.05, other: 0.17 };
+  return { qb: 0.08, rb: 0.56, fb: 0.12, wr: 0.04, other: 0.20 };
+}
+
 function applyStroudStats(scheduledGame, participation) {
   const stroudIsHome = scheduledGame.homeId === "team_stroud";
   const teamStats = stroudIsHome ? scheduledGame.stats.home : scheduledGame.stats.away;
@@ -1401,7 +1507,7 @@ function applyStroudStats(scheduledGame, participation) {
       passTD: scaledStat(teamStats.passTD, quarterShare[qb.id] || 1),
       intThrown: teamStats.turnovers ? rand(0, Math.min(3, teamStats.turnovers)) : 0,
       rushYards: ["Option", "Flexbone", "Wishbone", "Wing-T"].includes(game.settings.offense)
-        ? scaledStat(teamStats.rushYards * 0.22, quarterShare[qb.id] || 1)
+        ? scaledStat(teamStats.rushYards * rushingSharesForScheme().qb, quarterShare[qb.id] || 1)
         : scaledStat(rand(-10, 35), quarterShare[qb.id] || 1),
       rushTD: Math.random() < 0.22 ? 1 : 0
     });
@@ -1410,7 +1516,7 @@ function applyStroudStats(scheduledGame, participation) {
   if (rb) {
     addStats(rb, {
       games: 1,
-      rushYards: scaledStat(teamStats.rushYards * 0.55, quarterShare[rb.id] || 1),
+      rushYards: scaledStat(teamStats.rushYards * rushingSharesForScheme().rb, quarterShare[rb.id] || 1),
       rushTD: teamStats.rushTD,
       catches: rand(0, 4),
       recYards: rand(0, 42)
@@ -1420,34 +1526,36 @@ function applyStroudStats(scheduledGame, participation) {
   if (fb) {
     addStats(fb, {
       games: 1,
-      rushYards: scaledStat(teamStats.rushYards * 0.13, quarterShare[fb.id] || 1),
+      rushYards: scaledStat(teamStats.rushYards * rushingSharesForScheme().fb, quarterShare[fb.id] || 1),
       rushTD: Math.random() < 0.18 ? 1 : 0
     });
   }
 
   for (const receiver of receivers) {
     const yards = scaledStat(teamStats.passYards * (Math.random() * 0.25 + 0.13), quarterShare[receiver.id] || 1);
+    const catches = Math.max(1, Math.round(yards / rand(10, 17)));
+    const recTD = Math.random() < 0.28 ? 1 : 0;
     addStats(receiver, {
       games: 1,
-      catches: Math.max(1, Math.round(yards / rand(10, 17))),
+      catches,
       recYards: yards,
-      recTD: Math.random() < 0.28 ? 1 : 0
+      recTD
     });
+    addGameStatLine(gameLines, receiver, { catches, recYards: yards, recTD });
   }
 
   for (const defender of defenders) {
-    addStats(defender, {
-      games: 1,
-      tackles: scaledStat(rand(2, 12) + (opponentScore > 30 ? rand(0, 4) : 0), quarterShare[defender.id] || 1),
-      sacks: Math.random() < 0.16 ? 1 : 0,
-      interceptions: Math.random() < 0.1 ? 1 : 0
-    });
+    const tackles = scaledStat(rand(2, 12) + (opponentScore > 30 ? rand(0, 4) : 0), quarterShare[defender.id] || 1);
+    const sacks = Math.random() < 0.16 ? 1 : 0;
+    const interceptions = Math.random() < 0.1 ? 1 : 0;
+    addStats(defender, { games: 1, tackles, sacks, interceptions });
+    addGameStatLine(gameLines, defender, { tackles, sacks, interceptions });
   }
 
   addGameStatLine(gameLines, qb, qb ? { passYards: scaledStat(teamStats.passYards, quarterShare[qb.id] || 1), passTD: scaledStat(teamStats.passTD, quarterShare[qb.id] || 1) } : {});
-  addGameStatLine(gameLines, rb, rb ? { rushYards: scaledStat(teamStats.rushYards * 0.55, quarterShare[rb.id] || 1), rushTD: teamStats.rushTD } : {});
-  for (const receiver of receivers) addGameStatLine(gameLines, receiver, { recYards: receiver.seasonStats.recYards, catches: receiver.seasonStats.catches });
-  for (const defender of defenders.slice(0, 6)) addGameStatLine(gameLines, defender, { tackles: defender.seasonStats.tackles, sacks: defender.seasonStats.sacks, interceptions: defender.seasonStats.interceptions });
+  addGameStatLine(gameLines, rb, rb ? { rushYards: scaledStat(teamStats.rushYards * rushingSharesForScheme().rb, quarterShare[rb.id] || 1), rushTD: teamStats.rushTD } : {});
+  // receiver game lines are added in receiving loop
+  // defender game lines are added in defensive loop
   scheduledGame.playerStats = gameLines;
 
   const spotlight = pickSpotlight(myScore, opponentScore);
@@ -1733,7 +1841,7 @@ function individualGameStatsTable(lines) {
         ${meaningful.map(line => `
           <tr>
             <td>${escapeHtml(line.player)} (${escapeHtml(line.grade)})</td>
-            <td>${Object.entries(line.stats).map(([key, value]) => `${escapeHtml(key)}: ${value}`).join(" • ")}</td>
+            <td>${Object.entries(line.stats).map(([key, value]) => `${escapeHtml(formatStatKey(key))}: ${value}`).join(" • ")}</td>
           </tr>
         `).join("")}
       </tbody>
@@ -2431,28 +2539,40 @@ function rosterSortValue(player, key) {
 }
 
 function renderDepth() {
-  const renderSide = (title, side, positions) => `
-    <div class="card">
-      <h3>${title}</h3>
-      <div class="position-row muted small">
-        <strong>Pos</strong><span>Starter</span><span>Backup</span>
-      </div>
-      ${positions.map(position => renderDepthRow(side, position)).join("")}
-    </div>
-  `;
+  const offenseReq = requiredOffensePositions();
+  const offenseBackupReq = requiredBackupOffensePositions();
+  const tabs = [
+    ["offense", "Offense"],
+    ["defense", "Defense"],
+    ["special", "Special Teams"]
+  ];
+
+  const activeSide = window.currentDepthSide || "offense";
 
   document.getElementById("view").innerHTML = `
     <div class="row" style="margin-bottom:14px">
       <button id="fillDepthBtn">Fill Staff Guess</button>
       <button id="clearDepthBtn" class="secondary">Clear</button>
+      <span class="pill gold">${escapeHtml(game.settings.offense)} requirements active</span>
     </div>
 
-    <div class="depth-grid">
-      ${renderSide("Offense", "offense", OFFENSE_POSITIONS)}
-      ${renderSide("Defense", "defense", DEFENSE_POSITIONS)}
-      ${renderSide("Special Teams", "special", SPECIAL_POSITIONS)}
+    <div class="depth-tabs">
+      ${tabs.map(([side, label]) => `<button data-depth-tab="${side}" class="${activeSide === side ? "active" : ""}">${label}</button>`).join("")}
+    </div>
+
+    <div class="card depth-table-card">
+      ${activeSide === "offense" ? renderDepthTable("offense", OFFENSE_POSITIONS, offenseReq, offenseBackupReq) : ""}
+      ${activeSide === "defense" ? renderDepthTable("defense", DEFENSE_POSITIONS, DEFENSE_POSITIONS, DEFENSE_POSITIONS) : ""}
+      ${activeSide === "special" ? renderDepthTable("special", SPECIAL_POSITIONS, SPECIAL_POSITIONS, SPECIAL_POSITIONS) : ""}
     </div>
   `;
+
+  document.querySelectorAll("[data-depth-tab]").forEach(button => {
+    button.addEventListener("click", () => {
+      window.currentDepthSide = button.dataset.depthTab;
+      renderDepth();
+    });
+  });
 
   document.querySelectorAll("[data-depth-select]").forEach(select => {
     select.addEventListener("change", () => {
@@ -2477,15 +2597,61 @@ function renderDepth() {
   });
 }
 
-function renderDepthRow(side, position) {
+function renderDepthTable(side, positions, requiredStarters, requiredBackups) {
+  return `
+    <h3>${side === "offense" ? "Offense" : side === "defense" ? "Defense" : "Special Teams"}</h3>
+    <table class="depth-table">
+      <thead>
+        <tr>
+          <th>Pos</th>
+          <th>Starter</th>
+          <th>Backup</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${positions.map(position => renderDepthTableRow(side, position, requiredStarters.includes(position), requiredBackups.includes(position))).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderDepthTableRow(side, position, starterRequired, backupRequired) {
   const slots = game.depth[side][position];
 
   return `
-    <div class="position-row">
-      <strong>${position}</strong>
-      ${[0, 1].map(slot => renderDepthSelect(side, position, slot, slots[slot])).join("")}
-    </div>
+    <tr>
+      <td>
+        <strong class="gold-text">${position}</strong><br>
+        ${starterRequired ? `<span class="pill good">Starter required</span>` : `<span class="pill">Situational</span>`}
+        ${backupRequired ? `<br><span class="pill blue">Backup required</span>` : ""}
+      </td>
+      <td>${renderDepthSelect(side, position, 0, slots[0])}</td>
+      <td>${renderDepthSelect(side, position, 1, slots[1])}</td>
+      <td class="muted small">${depthPositionNote(side, position)}</td>
+    </tr>
   `;
+}
+
+function depthPositionNote(side, position) {
+  const scheme = game.settings.offense;
+  const pos = normalizePosition(position);
+
+  if (side === "offense") {
+    if (scheme === "Wing-T" && position === "FB") return "Engine of the offense. Carries, lead blocks, sells fakes.";
+    if (scheme === "Wing-T" && ["LG", "RG"].includes(position)) return "Pulling guards matter. Slow guards kill the Wing-T.";
+    if (scheme === "Air Raid" && ["WR1", "WR2", "WR3"].includes(position)) return "Major target volume in this offense.";
+    if (["Flexbone", "Wishbone", "Option"].includes(scheme) && position === "QB") return "Decision-making and ball handling matter more than pure arm.";
+    if (pos === "WR" && ["Wing-T", "Flexbone", "Wishbone"].includes(scheme)) return "Mostly blocks and decoys. Great WRs are less impactful here.";
+  }
+
+  if (side === "defense") {
+    if (["CB1", "CB2"].includes(position)) return "Bad corners get punished by passing teams.";
+    if (["FS", "SS"].includes(position)) return "Safeties clean up mistakes and matter against spread teams.";
+    if (["DT1", "DT2", "LE", "RE"].includes(position)) return "Controls the line. Huge against run-heavy teams.";
+  }
+
+  return "Only starter and backup enter games. Extra players at this position are reserves.";
 }
 
 function renderDepthSelect(side, position, slot, selectedId) {
@@ -2503,9 +2669,7 @@ function renderDepthSelect(side, position, slot, selectedId) {
           </option>
         `).join("")}
       </select>
-      <div class="depth-player-mini">
-        <span class="pill ${gradeClassName}">Here: ${grade}</span>
-      </div>
+      <div class="depth-player-mini"><span class="pill ${gradeClassName}">Here: ${grade}</span></div>
       ${player ? `<div class="depth-context">${escapeHtml(playerCurrentRoleText(player))}<br>${escapeHtml(currentAssignedGradeText(player))}</div>` : ""}
     </div>
   `;
@@ -2809,12 +2973,15 @@ function openPlayerCard(playerId) {
       ${playerPositionEditor(player)}
       <div class="grid two">
         <div class="card">
-          <h3>Ratings</h3>
+          <div class="rating-title-row">
+            <h3 style="margin:0">Ratings</h3>
+            ${["QB", "RB", "WR", "TE", "OL", "DL", "LB", "CB", "S", "K"].map(position => `<span class="pos-chip">${position} (${letterGrade(positionFit(player, position))})</span>`).join("")}
+          </div>
           <div class="stat-grid">
             ${PLAYER_STATS.map(stat => `
-              <div class="stat-line">
-                <span>${STAT_LABELS[stat]}</span>
-                <strong>${player.stats[stat]}</strong>
+              <div class="stat-line" style="display:block">
+                <div class="split"><span>${STAT_LABELS[stat]}</span><strong>${player.stats[stat]}</strong></div>
+                <div class="meter stat-line-bar"><span style="width:${clamp(player.stats[stat])}%"></span></div>
               </div>
             `).join("")}
           </div>
@@ -2831,21 +2998,6 @@ function openPlayerCard(playerId) {
       </div>
 
       <div class="grid two" style="margin-top:14px">
-        <div class="card">
-          <h3>Position Grades</h3>
-          <div class="grid two">
-            ${["QB", "RB", "WR", "TE", "OL", "DL", "LB", "CB", "S", "K"].map(position => {
-              const value = positionFit(player, position);
-              return `
-                <div class="card">
-                  <strong>${position}</strong><span style="float:right">${letterGrade(value)}</span>
-                  <div class="meter"><span style="width:${value}%"></span></div>
-                </div>
-              `;
-            }).join("")}
-          </div>
-        </div>
-
         <div class="card">
           <h3>Stats & Awards</h3>
           <p>
