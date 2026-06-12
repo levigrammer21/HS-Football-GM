@@ -1024,3 +1024,22 @@ tr:hover td {
   color: var(--muted);
   border-color: rgba(255,255,255,.14);
 }
+
+.depth-toolbar {
+  display: flex;
+  gap: 9px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 0 0 14px;
+}
+
+.depth-toolbar label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.depth-toolbar select {
+  width: auto;
+  min-width: 160px;
+}

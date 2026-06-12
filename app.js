@@ -1,6 +1,6 @@
 
 "use strict";
-const BUILD_VERSION = "v0.0.14-alpha";
+const BUILD_VERSION = "v0.0.15-alpha";
 const BUILD_DATE = "2026-06-12";
 
 function reportFatalError(error) {
@@ -2961,6 +2961,30 @@ function renderRoster() {
   });
 }
 
+
+function getDepthSortMode() {
+  return window.depthSortMode || "best";
+}
+
+function setDepthSortMode(mode) {
+  window.depthSortMode = mode === "name" ? "name" : "best";
+}
+
+function sortedPlayersForDepth(position) {
+  const players = [...game.players];
+
+  if (getDepthSortMode() === "name") {
+    return players.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  return players.sort((a, b) => {
+    const fitDiff = positionFit(b, position) - positionFit(a, position);
+    if (fitDiff !== 0) return fitDiff;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+
 function renderDepth() {
   const offenseReq = requiredOffensePositions();
   const offenseBackupReq = requiredBackupOffensePositions();
@@ -2973,10 +2997,15 @@ function renderDepth() {
   const activeSide = window.currentDepthSide || "offense";
 
   document.getElementById("view").innerHTML = `
-    <div class="row" style="margin-bottom:14px">
+    <div class="depth-toolbar">
       <button id="fillDepthBtn">Fill Staff Guess</button>
       <button id="clearDepthBtn" class="secondary">Clear</button>
       <span class="pill gold">${escapeHtml(game.settings.offense)} requirements active</span>
+      <label for="depthSortSelect">Sort dropdowns</label>
+      <select id="depthSortSelect">
+        <option value="best">Best Here</option>
+        <option value="name">Name</option>
+      </select>
     </div>
 
     <div class="depth-tabs">
@@ -2989,6 +3018,15 @@ function renderDepth() {
       ${activeSide === "special" ? renderDepthTable("special", SPECIAL_POSITIONS, SPECIAL_POSITIONS, SPECIAL_POSITIONS) : ""}
     </div>
   `;
+
+  const depthSortSelect = document.getElementById("depthSortSelect");
+  if (depthSortSelect) {
+    depthSortSelect.value = getDepthSortMode();
+    depthSortSelect.addEventListener("change", () => {
+      setDepthSortMode(depthSortSelect.value);
+      renderDepth();
+    });
+  }
 
   document.querySelectorAll("[data-depth-tab]").forEach(button => {
     button.addEventListener("click", () => {
@@ -3086,7 +3124,7 @@ function renderDepthSelect(side, position, slot, selectedId) {
     <div>
       <select data-depth-select="1" data-side="${side}" data-position="${position}" data-slot="${slot}">
         <option value="">Empty</option>
-        ${game.players.map(candidate => `
+        ${sortedPlayersForDepth(position).map(candidate => `
           <option value="${candidate.id}" ${candidate.id === selectedId ? "selected" : ""}>
             ${escapeHtml(positionLabelForDropdown(candidate, position))}
           </option>
