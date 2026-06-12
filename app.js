@@ -1,6 +1,6 @@
 
 "use strict";
-const BUILD_VERSION = "v0.0.9-alpha";
+const BUILD_VERSION = "v0.0.10-alpha";
 const BUILD_DATE = "2026-06-12";
 
 function reportFatalError(error) {
@@ -769,6 +769,14 @@ function letterGrade(value) {
   if (value >= 50) return "D+";
   if (value >= 44) return "D";
   return "F";
+}
+
+
+function positionPillClass(value) {
+  if (value >= 84) return "elite";
+  if (value >= 70) return "good";
+  if (value >= 55) return "mid";
+  return "bad";
 }
 
 function gradeClass(value) {
@@ -2973,9 +2981,12 @@ function openPlayerCard(playerId) {
       ${playerPositionEditor(player)}
       <div class="grid two">
         <div class="card">
-          <div class="rating-title-row">
-            <h3 style="margin:0">Ratings</h3>
-            ${["QB", "RB", "WR", "TE", "OL", "DL", "LB", "CB", "S", "K"].map(position => `<span class="pos-chip">${position} (${letterGrade(positionFit(player, position))})</span>`).join("")}
+          <h3 style="margin:0">Ratings</h3>
+          <div class="position-chip-row">
+            ${["QB", "RB", "WR", "TE", "OL", "DL", "LB", "CB", "S", "K"].map(position => {
+              const value = positionFit(player, position);
+              return `<span class="position-grade-pill ${positionPillClass(value)}"><span class="pos">${position}</span><span class="grade">${letterGrade(value)}</span></span>`;
+            }).join("")}
           </div>
           <div class="stat-grid">
             ${PLAYER_STATS.map(stat => `
