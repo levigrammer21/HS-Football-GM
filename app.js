@@ -1,22 +1,23 @@
 
-window.addEventListener("error", event => {
-  console.error("HSFG runtime error", event.error || event.message);
-  const toastBox = document.getElementById("toast");
-  if (toastBox) {
-    const node = document.createElement("div");
-    node.textContent = `Code error: ${event.message}. Try Clear Cache & Reload.`;
-    toastBox.appendChild(node);
+"use strict";
+const BUILD_VERSION = "v0.0.8-alpha";
+const BUILD_DATE = "2026-06-12";
+
+function reportFatalError(error) {
+  const message = error && error.stack ? error.stack : String(error);
+  console.error(error);
+  const banner = document.getElementById("errorBanner");
+  const text = document.getElementById("errorText");
+  if (banner && text) {
+    text.textContent = message;
+    banner.classList.remove("hidden");
+  } else {
+    alert("HS Football GM error: " + message);
   }
-});
-window.addEventListener("unhandledrejection", event => {
-  console.error("HSFG promise error", event.reason);
-  const toastBox = document.getElementById("toast");
-  if (toastBox) {
-    const node = document.createElement("div");
-    node.textContent = `Promise error: ${event.reason?.message || event.reason}.`;
-    toastBox.appendChild(node);
-  }
-});
+}
+
+window.addEventListener("error", event => reportFatalError(event.error || event.message));
+window.addEventListener("unhandledrejection", event => reportFatalError(event.reason || "Unhandled promise rejection"));
 
 /* ----------------------------- Firebase setup ---------------------------- */
 
@@ -29,38 +30,38 @@ const firebaseConfig = {
   appId: "1:472368284803:web:b0cabd6331c90661f147b6"
 };
 
+
+let firebaseApp = null;
+let db = null;
+let auth = null;
+let googleProvider = null;
 let firebaseReady = null;
-let firebaseApi = null;
-let currentUser = null;
+let firebaseFns = {};
 
 async function ensureFirebase() {
-  if (firebaseApi) return firebaseApi;
   if (firebaseReady) return firebaseReady;
 
-  firebaseReady = Promise.all([
-    import("https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js"),
-    import("https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js"),
-    import("https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js")
-  ]).then(([appModule, firestoreModule, authModule]) => {
-    const firebaseApp = appModule.initializeApp(firebaseConfig);
-    const db = firestoreModule.getFirestore(firebaseApp);
-    const auth = authModule.getAuth(firebaseApp);
-    const googleProvider = new authModule.GoogleAuthProvider();
+  firebaseReady = (async () => {
+    const appMod = await import("https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js");
+    const firestoreMod = await import("https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js");
+    const authMod = await import("https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js");
 
-    firebaseApi = {
-      db,
-      auth,
-      googleProvider,
-      doc: firestoreModule.doc,
-      getDoc: firestoreModule.getDoc,
-      setDoc: firestoreModule.setDoc,
-      serverTimestamp: firestoreModule.serverTimestamp,
-      signInWithPopup: authModule.signInWithPopup,
-      signInAnonymously: authModule.signInAnonymously,
-      onAuthStateChanged: authModule.onAuthStateChanged
+    firebaseApp = appMod.initializeApp(firebaseConfig);
+    db = firestoreMod.getFirestore(firebaseApp);
+    auth = authMod.getAuth(firebaseApp);
+    googleProvider = new authMod.GoogleAuthProvider();
+
+    firebaseFns = {
+      doc: firestoreMod.doc,
+      getDoc: firestoreMod.getDoc,
+      setDoc: firestoreMod.setDoc,
+      serverTimestamp: firestoreMod.serverTimestamp,
+      signInWithPopup: authMod.signInWithPopup,
+      signInAnonymously: authMod.signInAnonymously,
+      onAuthStateChanged: authMod.onAuthStateChanged
     };
 
-    firebaseApi.onAuthStateChanged(auth, user => {
+    firebaseFns.onAuthStateChanged(auth, user => {
       currentUser = user;
       if (game) {
         showApp();
@@ -68,19 +69,12 @@ async function ensureFirebase() {
       }
     });
 
-    return firebaseApi;
-  }).catch(error => {
-    firebaseReady = null;
-    console.error("Firebase failed to load", error);
-    toast("Firebase failed to load. Local play still works.");
-    throw error;
-  });
+    return true;
+  })();
 
   return firebaseReady;
 }
-
 /* ------------------------------- Constants ------------------------------- */
-
 
 const STORAGE_KEY = "hsfg_readable_v1";
 
@@ -293,6 +287,7 @@ function bindClick(id, handler) {
 
 /* --------------------------------- State -------------------------------- */
 
+let currentUser = null;
 let game = null;
 let currentView = "dashboard";
 let rosterSort = { key: "name", dir: 1 };
@@ -2071,23 +2066,18 @@ function loadLocal() {
     game = JSON.parse(raw);
     migrateSave();
     return true;
-  } catch (error) {
-    console.error("Load local failed", error);
+  } catch {
     return false;
   }
 }
 
 function migrateSave() {
   game.version = 1;
-  game.teams ||= createTeams();
-  if (!game.teams.some(team => team.id === "team_stroud")) game.teams = createTeams();
   game.players ||= [];
   game.records ||= { season: {}, career: {} };
   game.awards ||= [];
   game.history ||= [];
-  if (!game.depth || !game.depth.offense || !game.depth.defense || !game.depth.special) {
-    game.depth = emptyDepthChart();
-  }
+  game.depth ||= emptyDepthChart();
   game.prestige ??= 25;
   game.rivalries ||= createRivalries();
   ensureRivalTeams();
@@ -2105,56 +2095,54 @@ function migrateSave() {
 }
 
 async function saveCloud() {
-  let fb;
-  try {
-    fb = await ensureFirebase();
-  } catch {
-    return;
-  }
-
-  if (!currentUser) {
-    toast("Sign in first.");
-    return;
-  }
-
   if (!game) {
     toast("No dynasty to save.");
     return;
   }
 
-  await fb.setDoc(fb.doc(fb.db, "users", currentUser.uid, "saves", "main"), {
-    updatedAt: fb.serverTimestamp(),
-    gameState: game
-  });
+  try {
+    await ensureFirebase();
+    if (!currentUser) {
+      toast("Sign in first.");
+      return;
+    }
 
-  toast("Cloud saved.");
+    await firebaseFns.setDoc(firebaseFns.doc(db, "users", currentUser.uid, "saves", "main"), {
+      updatedAt: firebaseFns.serverTimestamp(),
+      gameState: game
+    });
+
+    toast("Cloud saved.");
+  } catch (error) {
+    reportFatalError(error);
+    toast("Cloud save failed.");
+  }
 }
 
 async function loadCloud() {
-  let fb;
   try {
-    fb = await ensureFirebase();
-  } catch {
-    return;
-  }
+    await ensureFirebase();
+    if (!currentUser) {
+      toast("Sign in first.");
+      return;
+    }
 
-  if (!currentUser) {
-    toast("Sign in first.");
-    return;
-  }
+    const snapshot = await firebaseFns.getDoc(firebaseFns.doc(db, "users", currentUser.uid, "saves", "main"));
+    if (!snapshot.exists()) {
+      toast("No cloud save found.");
+      return;
+    }
 
-  const snapshot = await fb.getDoc(fb.doc(fb.db, "users", currentUser.uid, "saves", "main"));
-  if (!snapshot.exists()) {
-    toast("No cloud save found.");
-    return;
+    game = snapshot.data().gameState;
+    migrateSave();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(game));
+    showApp();
+    render();
+    toast("Cloud loaded.");
+  } catch (error) {
+    reportFatalError(error);
+    toast("Cloud load failed.");
   }
-
-  game = snapshot.data().gameState;
-  migrateSave();
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(game));
-  showApp();
-  render();
-  toast("Cloud loaded.");
 }
 
 /* ---------------------------------- UI ---------------------------------- */
@@ -3213,8 +3201,8 @@ function adjustPrestigeForGame(scheduledGame) {
 
 bindClick("googleSignInBtn", async () => {
   try {
-    const fb = await ensureFirebase();
-    await fb.signInWithPopup(fb.auth, fb.googleProvider);
+    await ensureFirebase();
+    await firebaseFns.signInWithPopup(auth, googleProvider);
     if (!game && loadLocal()) {
       showApp();
       render();
@@ -3226,14 +3214,18 @@ bindClick("googleSignInBtn", async () => {
   }
 });
 
-bindClick("guestSignInBtn", () => {
-  currentUser = { uid: "local_guest", isAnonymous: true };
-  if (loadLocal()) {
-    showApp();
-    render();
-  } else {
-    showLogin();
-    toast("Guest mode ready. Tap New Dynasty.");
+bindClick("guestSignInBtn", async () => {
+  try {
+    await ensureFirebase();
+    await firebaseFns.signInAnonymously(auth);
+    if (loadLocal()) {
+      showApp();
+      render();
+    } else {
+      toast("Guest signed in. Start a dynasty.");
+    }
+  } catch (error) {
+    toast(`Guest failed: ${error.message}`);
   }
 });
 
@@ -3296,6 +3288,7 @@ if (importFileInput) {
 /* -------------------------------- Startup -------------------------------- */
 
 try {
+  console.log("HS Football GM v0.0.8-alpha");
   if (loadLocal()) {
     showApp();
     render();
@@ -3303,7 +3296,6 @@ try {
     showLogin();
   }
 } catch (error) {
-  console.error("Startup failed", error);
+  reportFatalError(error);
   showLogin();
-  toast("Old save caused a startup error. Use Clear Cache & Reload or start a New Dynasty.");
 }
