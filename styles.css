@@ -1052,3 +1052,179 @@ tr:hover td {
 .depth-sort-note {
   opacity: .9;
 }
+
+.player-select-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 85;
+  background: rgba(0, 0, 0, .56);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px;
+}
+.player-select-panel {
+  width: min(720px, 94vw);
+  max-height: 82vh;
+  overflow: hidden;
+  border-radius: 20px;
+  border: 1px solid rgba(116, 155, 218, .42);
+  background: linear-gradient(180deg, rgba(10, 24, 43, .98), rgba(7, 14, 25, .98));
+  box-shadow: 0 24px 80px rgba(0,0,0,.62);
+  color: var(--text);
+}
+.player-select-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(255,255,255,.10);
+}
+.player-select-title {
+  font-size: 18px;
+  font-weight: 950;
+}
+.player-select-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.player-select-controls select {
+  min-width: 150px;
+  width: auto;
+  min-height: 38px;
+}
+.player-select-close {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  padding: 0;
+  text-align: center;
+  font-size: 22px;
+}
+.player-select-list {
+  max-height: calc(82vh - 72px);
+  overflow: auto;
+}
+.player-select-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(145px, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 14px;
+  border: 0;
+  border-bottom: 1px solid rgba(255,255,255,.09);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  text-align: left;
+  color: var(--text);
+}
+.player-select-row:hover,
+.player-select-row.selected {
+  background: rgba(46, 123, 255, .14);
+}
+.player-select-name {
+  font-weight: 950;
+  font-size: 15px;
+}
+.player-select-meta {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 2px;
+}
+.player-select-roles {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.select-role-badge {
+  min-width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  padding: 0 7px;
+  font-size: 12px;
+  font-weight: 950;
+  border: 2px solid rgba(255,255,255,.18);
+  background: rgba(255,255,255,.04);
+  color: var(--muted);
+}
+.select-role-badge.starter {
+  border-color: #48e59b;
+  color: #48e59b;
+  box-shadow: 0 0 0 3px rgba(72,229,155,.08);
+}
+.select-role-badge.backup {
+  border-color: #ffd166;
+  color: #ffd166;
+  box-shadow: 0 0 0 3px rgba(255,209,102,.08);
+}
+.select-role-badge.jv {
+  border-color: rgba(160, 176, 208, .38);
+}
+.player-select-grade {
+  justify-self: end;
+  border-radius: 999px;
+  padding: 7px 10px;
+  min-width: 76px;
+  text-align: center;
+  font-weight: 950;
+  border: 1px solid rgba(72, 229, 155, .35);
+  color: #48e59b;
+  background: rgba(72,229,155,.07);
+}
+.player-select-footer {
+  padding: 10px 14px;
+  color: var(--muted);
+  font-size: 12px;
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  border-top: 1px solid rgba(255,255,255,.10);
+}
+.legend-dot {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  margin-right: 5px;
+  vertical-align: -1px;
+  border: 2px solid rgba(255,255,255,.28);
+}
+.legend-dot.starter { border-color: #48e59b; background: rgba(72,229,155,.25); }
+.legend-dot.backup { border-color: #ffd166; background: rgba(255,209,102,.25); }
+.legend-dot.jv { border-color: rgba(160, 176, 208, .55); background: rgba(255,255,255,.05); }
+
+.depth-fake-select {
+  width: 100%;
+  min-height: 46px;
+  border-radius: 14px;
+  background: #071323;
+  border: 1px solid rgba(70, 124, 194, .55);
+  color: var(--text);
+  padding: 10px 12px;
+  text-align: left;
+  box-shadow: none;
+}
+.depth-fake-select:hover {
+  background: rgba(46, 123, 255, .12);
+}
+@media(max-width: 620px) {
+  .player-select-panel { width: 96vw; max-height: 84vh; }
+  .player-select-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .player-select-roles { justify-content: flex-start; }
+  .player-select-grade { justify-self: start; }
+  .player-select-head {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+}

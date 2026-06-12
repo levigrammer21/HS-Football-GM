@@ -1,6 +1,6 @@
 
 "use strict";
-const BUILD_VERSION = "v0.0.18-alpha";
+const BUILD_VERSION = "v0.0.19-alpha";
 const BUILD_DATE = "2026-06-12";
 
 function reportFatalError(error) {
@@ -1227,6 +1227,24 @@ function roleTextForDropdown(playerId, side) {
 function depthDropdownRoles(player) {
   return `${roleTextForDropdown(player.id, "offense")}, ${roleTextForDropdown(player.id, "defense")}`;
 }
+
+function selectRoleBadgeHtml(role) {
+  if (!role) return `<span class="select-role-badge jv">JV</span>`;
+  const className = role.type === "Starter" ? "starter" : "backup";
+  return `<span class="select-role-badge ${className}">${role.position}</span>`;
+}
+
+function selectRoleBadgesForSide(playerId, side) {
+  const roles = playerDepthRoles(playerId).filter(role => role.side === side);
+  if (!roles.length) return selectRoleBadgeHtml(null);
+  return roles.map(selectRoleBadgeHtml).join("");
+}
+
+function playerSelectDisplayName(player) {
+  return `${player.name} • ${player.grade} • ${formatHeight(player.height)} ${player.weight}`;
+}
+
+
 function positionLabelForDropdown(player, position) {
   return `${player.name} • ${player.grade} • ${formatHeight(player.height)} ${player.weight} • ${depthDropdownRoles(player)} • Here: ${letterGrade(positionFit(player, position))}`;
 }
@@ -2987,11 +3005,10 @@ function renderDepth() {
   document.querySelectorAll("[data-depth-tab]").forEach(button => {
     button.addEventListener("click", () => { window.currentDepthSide = button.dataset.depthTab; renderDepth(); });
   });
-  document.querySelectorAll("[data-depth-select]").forEach(select => {
-    select.addEventListener("change", () => {
-      setDepthPlayer(select.dataset.side, select.dataset.position, Number(select.dataset.slot), select.value);
-      saveLocalSilent();
-      renderDepth();
+  document.querySelectorAll("[data-open-player-select]").forEach(button => {
+    button.addEventListener("click", () => {
+      const selectedId = game.depth[button.dataset.side][button.dataset.position][Number(button.dataset.slot)];
+      openDepthPlayerSelect(button.dataset.side, button.dataset.position, Number(button.dataset.slot), selectedId);
     });
   });
   document.getElementById("fillDepthBtn").addEventListener("click", () => {
@@ -3041,18 +3058,103 @@ function depthPositionNote(side, position) {
   }
   return "Only starter and backup enter games. Everyone else is JV until placed in the two-deep.";
 }
+
+function openDepthPlayerSelect(side, position, slot, selectedId) {
+  const overlay = document.getElementById("playerSelectOverlay");
+  const panel = document.getElementById("playerSelectPanel");
+  if (!overlay || !panel) return;
+
+  const sortMode = getDepthSortMode();
+  const players = sortedPlayersForDepth(position);
+
+  panel.innerHTML = `
+    <div class="player-select-head">
+      <div class="player-select-title">Select Player</div>
+      <div class="player-select-controls">
+        <label class="muted small">Sort by</label>
+        <select id="playerPopupSort">
+          <option value="best">Best Here</option>
+          <option value="name">Name</option>
+        </select>
+        <button id="closePlayerSelectBtn" class="player-select-close secondary">×</button>
+      </div>
+    </div>
+    <div class="player-select-list">
+      <button class="player-select-row ${!selectedId ? "selected" : ""}" data-select-player="">
+        <div>
+          <div class="player-select-name">Empty</div>
+          <div class="player-select-meta">No player assigned</div>
+        </div>
+        <div class="player-select-roles">
+          <span class="select-role-badge jv">—</span>
+        </div>
+        <div class="player-select-grade">Here: -</div>
+      </button>
+      ${players.map(player => {
+        const hereGrade = letterGrade(positionFit(player, position));
+        return `
+          <button class="player-select-row ${player.id === selectedId ? "selected" : ""}" data-select-player="${player.id}">
+            <div>
+              <div class="player-select-name">${escapeHtml(player.name)}</div>
+              <div class="player-select-meta">${player.grade} • ${formatHeight(player.height)} • ${player.weight}</div>
+            </div>
+            <div class="player-select-roles">
+              ${selectRoleBadgesForSide(player.id, "offense")}
+              ${selectRoleBadgesForSide(player.id, "defense")}
+            </div>
+            <div class="player-select-grade">Here: ${hereGrade}</div>
+          </button>
+        `;
+      }).join("")}
+    </div>
+    <div class="player-select-footer">
+      <span><span class="legend-dot starter"></span>Starter</span>
+      <span><span class="legend-dot backup"></span>Backup</span>
+      <span><span class="legend-dot jv"></span>JV / not in two-deep</span>
+    </div>
+  `;
+
+  overlay.classList.remove("hidden");
+
+  const popupSort = document.getElementById("playerPopupSort");
+  popupSort.value = sortMode;
+  popupSort.addEventListener("change", () => {
+    setDepthSortMode(popupSort.value);
+    openDepthPlayerSelect(side, position, slot, selectedId);
+  });
+
+  document.getElementById("closePlayerSelectBtn").addEventListener("click", closeDepthPlayerSelect);
+
+  panel.querySelectorAll("[data-select-player]").forEach(button => {
+    button.addEventListener("click", () => {
+      setDepthPlayer(side, position, slot, button.dataset.selectPlayer);
+      saveLocalSilent();
+      closeDepthPlayerSelect();
+      renderDepth();
+    });
+  });
+}
+
+function closeDepthPlayerSelect() {
+  document.getElementById("playerSelectOverlay")?.classList.add("hidden");
+}
+
+
 function renderDepthSelect(side, position, slot, selectedId) {
   const player = getPlayer(selectedId);
   const grade = player ? letterGrade(positionFit(player, position)) : "-";
   const gradeClassName = player ? gradeClass(positionFit(player, position)) : "";
-  return `<div>
-    <select data-depth-select="1" data-side="${side}" data-position="${position}" data-slot="${slot}">
-      <option value="">Empty</option>
-      ${sortedPlayersForDepth(position).map(candidate => `<option value="${candidate.id}" ${candidate.id === selectedId ? "selected" : ""}>${escapeHtml(positionLabelForDropdown(candidate, position))}</option>`).join("")}
-    </select>
-    <div class="depth-player-mini"><span class="pill ${gradeClassName}">Here: ${grade}</span></div>
-    ${player ? `<div class="depth-context">${playerStatusPill(player.id)}<br>O: ${escapeHtml(rolePositionOnly(player.id, "offense"))} • D: ${escapeHtml(rolePositionOnly(player.id, "defense"))}</div>` : ""}
-  </div>`;
+  const buttonText = player ? player.name : "Empty";
+
+  return `
+    <div>
+      <button class="depth-fake-select" data-open-player-select="1" data-side="${side}" data-position="${position}" data-slot="${slot}">
+        ${escapeHtml(buttonText)}
+      </button>
+      <div class="depth-player-mini"><span class="pill ${gradeClassName}">Here: ${grade}</span></div>
+      ${player ? `<div class="depth-context">${playerStatusPill(player.id)}<br>O: ${escapeHtml(rolePositionOnly(player.id, "offense"))} • D: ${escapeHtml(rolePositionOnly(player.id, "defense"))}</div>` : ""}
+    </div>
+  `;
 }
 
 function renderSchemes() {
@@ -3846,6 +3948,13 @@ bindClick("clearCacheBtn", () => {
 });
 
 bindClick("closeModalBtn", closeModal);
+
+const playerSelectOverlayNode = document.getElementById("playerSelectOverlay");
+if (playerSelectOverlayNode) {
+  playerSelectOverlayNode.addEventListener("click", event => {
+    if (event.target.id === "playerSelectOverlay") closeDepthPlayerSelect();
+  });
+}
 
 const menuOverlayNode = document.getElementById("menuOverlay");
 if (menuOverlayNode) {
