@@ -128,6 +128,27 @@ const ALL_POSITIONS = [...OFFENSE_POSITIONS, ...DEFENSE_POSITIONS, ...SPECIAL_PO
 const OFFENSES = ["Spread", "Air Raid", "Pro Style", "Option", "Wing-T", "Power-I", "Flexbone", "Wishbone"];
 const DEFENSES = ["4-3", "3-4", "4-4", "3-3-5", "5-2", "Nickel", "Bear"];
 
+const SCHEME_PROFILES = {
+  "Spread": { runPass: "45% run / 55% pass", critical: ["QB", "WR", "WR", "RB", "LT"], text: "Spread football is about space. A smart QB, explosive receivers, and a back who can punish light boxes make this offense dangerous. Bad corners get exposed fast." },
+  "Air Raid": { runPass: "25% run / 75% pass", critical: ["QB", "WR", "WR", "WR", "LT"], text: "The Air Raid lives through the quarterback and receivers. If your WR room is special and the opponent cannot cover, this can get ugly. A weak QB makes it fall apart." },
+  "Pro Style": { runPass: "50% run / 50% pass", critical: ["QB", "RB", "TE", "WR", "OL"], text: "Pro Style asks for balance. It rewards complete players and punishes one-dimensional rosters. A good TE matters more here than in most systems." },
+  "Option": { runPass: "80% run / 20% pass", critical: ["QB", "RB", "FB", "OL", "OL"], text: "The Option wants a tough QB, disciplined backs, and linemen who can move. Arm talent is nice, but mesh timing, ball handling, and decision-making carry the system." },
+  "Wing-T": { runPass: "85% run / 15% pass", critical: ["FB", "RB", "RB", "LG", "RG"], text: "The Wing-T is misdirection, toughness, and timing. Fullback is the engine. Wingbacks need quickness. Guards must pull. Wide receivers are mostly blockers and decoys." },
+  "Power-I": { runPass: "70% run / 30% pass", critical: ["RB", "FB", "OL", "OL", "TE"], text: "Power-I is a fistfight. Get downhill, lean on the fullback, and make the opponent tackle for four quarters. Great receivers are wasted unless the run game forces coverage mistakes." },
+  "Flexbone": { runPass: "88% run / 12% pass", critical: ["QB", "FB", "RB", "RB", "OL"], text: "Flexbone is option football turned all the way up. It needs a fearless QB, a bruising fullback, quick slots, and offensive linemen who can reach and cut angles." },
+  "Wishbone": { runPass: "82% run / 18% pass", critical: ["QB", "FB", "RB", "RB", "OL"], text: "Wishbone pounds the ball with three backs and asks the QB to make clean decisions. It is not pretty, but with the right kids it drains the clock and breaks wills." }
+};
+const DEFENSE_PROFILES = {
+  "4-3": { critical: ["DL", "DL", "LB", "LB", "S"], text: "Balanced and dependable. Needs linebackers who can clean up and defensive linemen who do not get moved." },
+  "3-4": { critical: ["DL", "LB", "LB", "LB", "CB"], text: "Linebackers are the stars. Great if you have tough, flexible kids who can blitz, scrape, and cover." },
+  "4-4": { critical: ["DL", "LB", "LB", "S", "CB"], text: "Built for small-school run defense. It can smother ground teams, but weak corners can get picked on." },
+  "3-3-5": { critical: ["S", "S", "CB", "LB", "DL"], text: "Speed and confusion. Great against spread teams if your safeties and corners can tackle." },
+  "5-2": { critical: ["DL", "DL", "DL", "LB", "LB"], text: "Old-school wall of bodies. Strong versus power run, vulnerable if the opponent spreads you out." },
+  "Nickel": { critical: ["CB", "CB", "S", "S", "LB"], text: "Coverage first. Good against passing teams, but you better have enough toughness in the box." },
+  "Bear": { critical: ["DL", "DL", "LB", "LB", "S"], text: "Aggressive and nasty. Creates chaos up front, but can give up big plays if the back end misses fits." }
+};
+
+
 const PLAYER_STATS = [
   "speed",
   "acceleration",
@@ -804,7 +825,7 @@ function startFirstSeason() {
 
   game.phase = "regular";
   game.week = 1;
-  game.depth = staffGuessDepthChart();
+  game.depth = emptyDepthChart();
   game.schedule = createSchedule();
   recalculateTeamRatings();
   game.rankings = rankTeams();
@@ -942,6 +963,70 @@ function recalculateTeamRatings() {
   }
 }
 
+
+function validateDepthChartForGame() {
+  const missing = [];
+  for (const position of OFFENSE_POSITIONS) {
+    if (!game.depth.offense[position][0]) missing.push(`Offense ${position} starter`);
+    if (!game.depth.offense[position][1]) missing.push(`Offense ${position} backup`);
+  }
+  for (const position of DEFENSE_POSITIONS) {
+    if (!game.depth.defense[position][0]) missing.push(`Defense ${position} starter`);
+    if (!game.depth.defense[position][1]) missing.push(`Defense ${position} backup`);
+  }
+  for (const position of SPECIAL_POSITIONS) {
+    if (!game.depth.special[position][0]) missing.push(`Special Teams ${position} starter`);
+    if (!game.depth.special[position][1]) missing.push(`Special Teams ${position} backup`);
+  }
+  return missing;
+}
+function showDepthChartWarning(missing) {
+  setModal("Depth Chart Not Ready", "You need starters and backups before kickoff.", `
+    <div class="card">
+      <h3>Game cannot start yet</h3>
+      <p class="muted">Every starting position and backup spot must be filled before you can advance into a game. Injuries can happen during games, so backups matter.</p>
+      <ul>${missing.slice(0, 18).map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+      ${missing.length > 18 ? `<p class="muted">...and ${missing.length - 18} more.</p>` : ""}
+      <button id="goDepthFromWarningBtn">Go to Depth Chart</button>
+    </div>
+  `);
+  showModal();
+  document.getElementById("goDepthFromWarningBtn").addEventListener("click", () => {
+    closeModal();
+    currentView = "depth";
+    render();
+  });
+}
+function currentWeekHasStroudGame() {
+  if (game.phase === "regular") {
+    return game.schedule.some(item => item.week === game.week && !item.played && (item.homeId === "team_stroud" || item.awayId === "team_stroud"));
+  }
+  if (game.phase === "playoffs") {
+    return game.playoffBracket.some(item => !item.played && (item.homeId === "team_stroud" || item.awayId === "team_stroud"));
+  }
+  return false;
+}
+function confirmNewDynasty() {
+  if (!game || window.confirm("Start a new dynasty? Export or cloud save first if you want to keep this one.")) {
+    createNewDynastyIntro();
+  }
+}
+function playerCurrentRoleText(player) {
+  if (!player) return "";
+  return `${player.offensePosition ? `Off ${player.offensePosition}` : "Off -"} / ${player.defensePosition ? `Def ${player.defensePosition}` : "Def -"} / ${player.specialPosition ? `ST ${player.specialPosition}` : "ST -"}`;
+}
+function currentAssignedGradeText(player) {
+  if (!player) return "";
+  const grades = [];
+  if (player.offensePosition) grades.push(`Off ${player.offensePosition}: ${letterGrade(positionFit(player, player.offensePosition))}`);
+  if (player.defensePosition) grades.push(`Def ${player.defensePosition}: ${letterGrade(positionFit(player, player.defensePosition))}`);
+  if (player.specialPosition) grades.push(`ST ${player.specialPosition}: ${letterGrade(positionFit(player, player.specialPosition))}`);
+  return grades.join(" • ");
+}
+function depthOptionLabel(player, position) {
+  return `${player.name} • ${player.grade} • ${formatHeight(player.height)} ${player.weight} • ${playerCurrentRoleText(player)} • Here: ${letterGrade(positionFit(player, position))}`;
+}
+
 function advanceWeek() {
   if (!game) {
     createNewDynastyIntro();
@@ -953,6 +1038,14 @@ function advanceWeek() {
   if (game.phase === "intro") {
     showIntroNewspaper();
     return;
+  }
+
+  if ((game.phase === "regular" || game.phase === "playoffs") && currentWeekHasStroudGame()) {
+    const missing = validateDepthChartForGame();
+    if (missing.length) {
+      showDepthChartWarning(missing);
+      return;
+    }
   }
 
   if (game.phase === "regular") {
@@ -994,10 +1087,12 @@ function simulateGame(scheduledGame) {
   const away = getTeam(scheduledGame.awayId);
 
   const activeDepth = JSON.parse(JSON.stringify(game.depth));
+  const participation = [];
   scheduledGame.log = [];
 
   for (let quarter = 1; quarter <= 4; quarter++) {
     processQuarterInjuries(scheduledGame, quarter, activeDepth);
+    participation.push(JSON.parse(JSON.stringify(activeDepth)));
   }
 
   const [homeScore, awayScore] = simulateScore(home, away);
@@ -1013,7 +1108,7 @@ function simulateGame(scheduledGame) {
   applyTeamResult(home, away, homeScore, awayScore, scheduledGame.district);
 
   if (scheduledGame.homeId === "team_stroud" || scheduledGame.awayId === "team_stroud") {
-    applyStroudStats(scheduledGame, activeDepth);
+    applyStroudStats(scheduledGame, participation);
     updateRivalryRecord(scheduledGame);
     adjustPrestigeForGame(scheduledGame);
   }
@@ -1058,29 +1153,25 @@ function simulateScore(home, away) {
 }
 
 function simulateBoxScore(team, opponent, points) {
-  const passRate = ["Air Raid", "Spread", "Pro Style"].includes(team.offense)
-    ? rand(43, 58) / 100
-    : rand(22, 42) / 100;
+  const profile = SCHEME_PROFILES[team.offense] || SCHEME_PROFILES["Pro Style"];
+  const passNumber = Number(profile.runPass.match(/(\d+)% pass/)?.[1] || 50);
+  const passRate = clamp(passNumber / 100 + rand(-6, 6) / 100, 0.08, 0.85);
+  const matchup = schemeMatchupRating(team, opponent);
+  const totalYards = clamp(185 + points * 6.5 + matchup * 4.8 + bell(0, 42, -95, 125), 45, 640);
 
-  const totalYards = clamp(
-    190 + points * 7 + (team.offenseRating - opponent.defenseRating) * 3 + bell(0, 45, -90, 120),
-    60,
-    620
-  );
-
-  let passing = Math.round(totalYards * passRate + bell(0, 25, -65, 65));
+  let passing = Math.round(totalYards * passRate + bell(0, 22, -55, 55));
   let rushing = Math.round(totalYards - passing);
 
   if (points >= 55 && team.power - opponent.power > 28) {
-    rushing += rand(45, 130);
-    passing = Math.min(passing, rand(90, 260));
+    if (passRate < 0.45) rushing += rand(45, 130);
+    else passing += rand(25, 90);
   }
 
-  passing = clamp(passing, 0, 430);
-  rushing = clamp(rushing, 0, 430);
+  passing = clamp(passing, 0, 460);
+  rushing = clamp(rushing, 0, 470);
 
-  const passTD = clamp(Math.round(points / 14 + (passing > 220 ? 1 : 0) + rand(-1, 1)), 0, 6);
-  const rushTD = clamp(Math.floor(points / 7) - passTD, 0, 7);
+  const passTD = clamp(Math.round(points * passRate / 7 + rand(-1, 1)), 0, 7);
+  const rushTD = clamp(Math.floor(points / 7) - passTD, 0, 8);
 
   return {
     passYards: passing,
@@ -1088,8 +1179,38 @@ function simulateBoxScore(team, opponent, points) {
     totalYards: passing + rushing,
     passTD,
     rushTD,
-    turnovers: rand(0, team.offenseRating < 45 ? 4 : 2)
+    turnovers: rand(0, team.offenseRating < 45 ? 4 : 2),
+    scheme: team.offense,
+    runPass: profile.runPass,
+    matchup: round1(matchup)
   };
+}
+
+function schemeMatchupRating(team, opponent) {
+  if (team.id !== "team_stroud") return (team.offenseRating - opponent.defenseRating) / 5;
+
+  const offense = startersForSide("offense");
+  const scheme = game.settings.offense;
+
+  function grade(position) {
+    const player = getPlayer(offense[position]);
+    return player ? positionFit(player, position) : 25;
+  }
+
+  function avgPos(positions) {
+    return average(positions.map(grade));
+  }
+
+  let attack = average(OFFENSE_POSITIONS.map(grade));
+
+  if (scheme === "Air Raid") attack = grade("QB") * 0.34 + avgPos(["WR1", "WR2", "WR3"]) * 0.42 + grade("LT") * 0.12 + grade("RB") * 0.12;
+  else if (scheme === "Spread") attack = grade("QB") * 0.28 + avgPos(["WR1", "WR2", "WR3"]) * 0.32 + grade("RB") * 0.2 + avgPos(["LT", "LG", "C", "RG", "RT"]) * 0.2;
+  else if (scheme === "Wing-T") attack = grade("FB") * 0.3 + avgPos(["RB", "TE"]) * 0.18 + avgPos(["LG", "RG", "C"]) * 0.34 + grade("QB") * 0.12 + avgPos(["WR1", "WR2"]) * 0.06;
+  else if (scheme === "Power-I") attack = grade("RB") * 0.28 + grade("FB") * 0.2 + avgPos(["LT", "LG", "C", "RG", "RT"]) * 0.34 + grade("TE") * 0.12 + grade("QB") * 0.06;
+  else if (["Option", "Flexbone", "Wishbone"].includes(scheme)) attack = grade("QB") * 0.28 + grade("FB") * 0.22 + grade("RB") * 0.22 + avgPos(["LT", "LG", "C", "RG", "RT"]) * 0.28;
+  else if (scheme === "Pro Style") attack = grade("QB") * 0.24 + grade("RB") * 0.22 + grade("TE") * 0.16 + avgPos(["WR1", "WR2"]) * 0.18 + avgPos(["LT", "LG", "C", "RG", "RT"]) * 0.2;
+
+  return (attack - opponent.defenseRating) / 6;
 }
 
 function processQuarterInjuries(scheduledGame, quarter, activeDepth) {
@@ -1111,8 +1232,8 @@ function processQuarterInjuries(scheduledGame, quarter, activeDepth) {
   }
 
   const activeStarters = [
-    ...Object.values(activeDepth.offense).map(slots => slots[0]),
-    ...Object.values(activeDepth.defense).map(slots => slots[0])
+    ...Object.values(participation[0].offense).map(slots => slots[0]),
+    ...Object.values(participation[0].defense).map(slots => slots[0])
   ].filter(Boolean);
 
   if (!activeStarters.length) return;
@@ -1181,14 +1302,37 @@ function applyTeamResult(home, away, homeScore, awayScore, district) {
   }
 }
 
-function applyStroudStats(scheduledGame, activeDepth) {
+
+function playerQuarterShares(participation) {
+  const shares = {};
+  for (const depth of participation) {
+    const activeIds = [
+      ...Object.values(depth.offense).map(slots => slots[0]),
+      ...Object.values(depth.defense).map(slots => slots[0]),
+      ...Object.values(depth.special).map(slots => slots[0])
+    ].filter(Boolean);
+    for (const playerId of activeIds) shares[playerId] = (shares[playerId] || 0) + 0.25;
+  }
+  return shares;
+}
+function scaledStat(value, share) {
+  return Math.round(value * (share || 0));
+}
+function addGameStatLine(lines, player, stats) {
+  if (!player) return;
+  lines.push({ player: player.name, grade: player.grade, stats });
+}
+
+function applyStroudStats(scheduledGame, participation) {
   const stroudIsHome = scheduledGame.homeId === "team_stroud";
   const teamStats = stroudIsHome ? scheduledGame.stats.home : scheduledGame.stats.away;
   const myScore = stroudIsHome ? scheduledGame.homeScore : scheduledGame.awayScore;
   const opponentScore = stroudIsHome ? scheduledGame.awayScore : scheduledGame.homeScore;
 
-  const offense = activeDepth.offense;
-  const defense = activeDepth.defense;
+  const offense = participation[0].offense;
+  const defense = participation[0].defense;
+  const quarterShare = playerQuarterShares(participation);
+  const gameLines = [];
 
   const qb = getPlayer(offense.QB[0]);
   const rb = getPlayer(offense.RB[0]);
@@ -1199,12 +1343,12 @@ function applyStroudStats(scheduledGame, activeDepth) {
   if (qb) {
     addStats(qb, {
       games: 1,
-      passYards: teamStats.passYards,
-      passTD: teamStats.passTD,
+      passYards: scaledStat(teamStats.passYards, quarterShare[qb.id] || 1),
+      passTD: scaledStat(teamStats.passTD, quarterShare[qb.id] || 1),
       intThrown: teamStats.turnovers ? rand(0, Math.min(3, teamStats.turnovers)) : 0,
       rushYards: ["Option", "Flexbone", "Wishbone", "Wing-T"].includes(game.settings.offense)
-        ? Math.round(teamStats.rushYards * 0.22)
-        : rand(-10, 35),
+        ? scaledStat(teamStats.rushYards * 0.22, quarterShare[qb.id] || 1)
+        : scaledStat(rand(-10, 35), quarterShare[qb.id] || 1),
       rushTD: Math.random() < 0.22 ? 1 : 0
     });
   }
@@ -1212,7 +1356,7 @@ function applyStroudStats(scheduledGame, activeDepth) {
   if (rb) {
     addStats(rb, {
       games: 1,
-      rushYards: Math.round(teamStats.rushYards * 0.55),
+      rushYards: scaledStat(teamStats.rushYards * 0.55, quarterShare[rb.id] || 1),
       rushTD: teamStats.rushTD,
       catches: rand(0, 4),
       recYards: rand(0, 42)
@@ -1222,13 +1366,13 @@ function applyStroudStats(scheduledGame, activeDepth) {
   if (fb) {
     addStats(fb, {
       games: 1,
-      rushYards: Math.round(teamStats.rushYards * 0.13),
+      rushYards: scaledStat(teamStats.rushYards * 0.13, quarterShare[fb.id] || 1),
       rushTD: Math.random() < 0.18 ? 1 : 0
     });
   }
 
   for (const receiver of receivers) {
-    const yards = Math.round(teamStats.passYards * (Math.random() * 0.25 + 0.13));
+    const yards = scaledStat(teamStats.passYards * (Math.random() * 0.25 + 0.13), quarterShare[receiver.id] || 1);
     addStats(receiver, {
       games: 1,
       catches: Math.max(1, Math.round(yards / rand(10, 17))),
@@ -1240,11 +1384,17 @@ function applyStroudStats(scheduledGame, activeDepth) {
   for (const defender of defenders) {
     addStats(defender, {
       games: 1,
-      tackles: rand(2, 12) + (opponentScore > 30 ? rand(0, 4) : 0),
+      tackles: scaledStat(rand(2, 12) + (opponentScore > 30 ? rand(0, 4) : 0), quarterShare[defender.id] || 1),
       sacks: Math.random() < 0.16 ? 1 : 0,
       interceptions: Math.random() < 0.1 ? 1 : 0
     });
   }
+
+  addGameStatLine(gameLines, qb, qb ? { passYards: scaledStat(teamStats.passYards, quarterShare[qb.id] || 1), passTD: scaledStat(teamStats.passTD, quarterShare[qb.id] || 1) } : {});
+  addGameStatLine(gameLines, rb, rb ? { rushYards: scaledStat(teamStats.rushYards * 0.55, quarterShare[rb.id] || 1), rushTD: teamStats.rushTD } : {});
+  for (const receiver of receivers) addGameStatLine(gameLines, receiver, { recYards: receiver.seasonStats.recYards, catches: receiver.seasonStats.catches });
+  for (const defender of defenders.slice(0, 6)) addGameStatLine(gameLines, defender, { tackles: defender.seasonStats.tackles, sacks: defender.seasonStats.sacks, interceptions: defender.seasonStats.interceptions });
+  scheduledGame.playerStats = gameLines;
 
   const spotlight = pickSpotlight(myScore, opponentScore);
   if (spotlight) {
@@ -1254,8 +1404,8 @@ function applyStroudStats(scheduledGame, activeDepth) {
   }
 
   const starters = new Set([
-    ...Object.values(activeDepth.offense).map(slots => slots[0]),
-    ...Object.values(activeDepth.defense).map(slots => slots[0])
+    ...Object.values(participation[0].offense).map(slots => slots[0]),
+    ...Object.values(participation[0].defense).map(slots => slots[0])
   ].filter(Boolean));
 
   for (const playerId of starters) {
@@ -1357,6 +1507,7 @@ function makeWeeklyPaper(week, games) {
   let gameStats = null;
   let injuries = [];
   let rivalry = null;
+  let playerStats = [];
 
   if (stroudGame) {
     const home = getTeam(stroudGame.homeId);
@@ -1379,6 +1530,7 @@ function makeWeeklyPaper(week, games) {
 
     gameStats = stroudGame.stats;
     injuries = stroudGame.injuries || [];
+    playerStats = stroudGame.playerStats || [];
 
     const opponent = stroudGame.homeId === "team_stroud" ? away : home;
     if (RIVALS.includes(opponent.name)) {
@@ -1417,7 +1569,8 @@ function makeWeeklyPaper(week, games) {
     rare,
     gameStats,
     injuries,
-    rivalry
+    rivalry,
+    playerStats
   };
 }
 
@@ -1454,6 +1607,7 @@ function newspaperHtml() {
 
           <h4>Game Stats</h4>
           ${paper.gameStats ? gameStatsTable(paper.gameStats) : "<p>No Stroud game stats yet.</p>"}
+          ${paper.playerStats?.length ? individualGameStatsTable(paper.playerStats) : ""}
 
           <h4>Top Tigers</h4>
           ${paper.topPerformers.length ? paper.topPerformers.map(performer => `
@@ -1503,11 +1657,31 @@ function gameStatsTable(stats) {
   return `
     <table style="color:#241a10">
       <thead>
-        <tr><th>Team</th><th>Pass</th><th>Rush</th><th>Total</th><th>TO</th></tr>
+        <tr><th>Team</th><th>Scheme</th><th>Pass</th><th>Rush</th><th>Total</th><th>TO</th></tr>
       </thead>
       <tbody>
-        <tr><td>Home</td><td>${stats.home.passYards}</td><td>${stats.home.rushYards}</td><td>${stats.home.totalYards}</td><td>${stats.home.turnovers}</td></tr>
-        <tr><td>Away</td><td>${stats.away.passYards}</td><td>${stats.away.rushYards}</td><td>${stats.away.totalYards}</td><td>${stats.away.turnovers}</td></tr>
+        <tr><td>Home</td><td>${escapeHtml(stats.home.scheme || "")}<br><small>${escapeHtml(stats.home.runPass || "")}</small></td><td>${stats.home.passYards}</td><td>${stats.home.rushYards}</td><td>${stats.home.totalYards}</td><td>${stats.home.turnovers}</td></tr>
+        <tr><td>Away</td><td>${escapeHtml(stats.away.scheme || "")}<br><small>${escapeHtml(stats.away.runPass || "")}</small></td><td>${stats.away.passYards}</td><td>${stats.away.rushYards}</td><td>${stats.away.totalYards}</td><td>${stats.away.turnovers}</td></tr>
+      </tbody>
+    </table>
+  `;
+}
+
+
+function individualGameStatsTable(lines) {
+  const meaningful = lines.filter(line => Object.values(line.stats || {}).some(value => Number(value) > 0)).slice(0, 14);
+  if (!meaningful.length) return "";
+  return `
+    <h4>Individual Game Stats</h4>
+    <table style="color:#241a10">
+      <thead><tr><th>Player</th><th>Stats</th></tr></thead>
+      <tbody>
+        ${meaningful.map(line => `
+          <tr>
+            <td>${escapeHtml(line.player)} (${escapeHtml(line.grade)})</td>
+            <td>${Object.entries(line.stats).map(([key, value]) => `${escapeHtml(key)}: ${value}`).join(" • ")}</td>
+          </tr>
+        `).join("")}
       </tbody>
     </table>
   `;
@@ -2272,38 +2446,47 @@ function renderDepthSelect(side, position, slot, selectedId) {
 }
 
 function renderSchemes() {
+  const offenseProfile = SCHEME_PROFILES[game.settings.offense] || SCHEME_PROFILES["Pro Style"];
+  const defenseProfile = DEFENSE_PROFILES[game.settings.defense] || DEFENSE_PROFILES["4-3"];
+
   document.getElementById("view").innerHTML = `
     <div class="grid two">
       <div class="card">
         <h3>Systems</h3>
-
         <label class="muted small">Offense</label>
         <select id="offenseSelect">${OFFENSES.map(item => `<option>${item}</option>`).join("")}</select>
-
         <br><br>
-
         <label class="muted small">Defense</label>
         <select id="defenseSelect">${DEFENSES.map(item => `<option>${item}</option>`).join("")}</select>
-
         <br><br>
-
         <button id="saveSchemesBtn">Save Systems</button>
       </div>
 
       <div class="card">
         <h3>Practice</h3>
-
         <label class="muted small">Team Focus</label>
         <select id="teamFocusSelect">
           ${["Position Drills", "Weight Room", "Conditioning", "Film Study", "Scrimmage"].map(item => `<option>${item}</option>`).join("")}
         </select>
-
-        <p class="muted">
-          Practice improves ratings and reveals hidden traits. Scrimmage helps reveal Gamer and Clutch.
-          Film Study helps reveal Football IQ.
-        </p>
-
+        <p class="muted">Practice improves ratings and reveals hidden traits. Scrimmage helps reveal Gamer and Clutch. Film Study helps reveal Football IQ.</p>
         <button id="savePracticeBtn">Save Practice</button>
+      </div>
+    </div>
+
+    <div class="grid two" style="margin-top:14px">
+      <div class="card scheme-card">
+        <h3>${escapeHtml(game.settings.offense)} Offense</h3>
+        <span class="pill gold">${escapeHtml(offenseProfile.runPass)}</span>
+        <h4>Position Demands</h4>
+        <p class="muted"><strong>Most Critical:</strong> ${offenseProfile.critical.join(", ")}</p>
+        <p class="muted">${escapeHtml(offenseProfile.text)}</p>
+      </div>
+
+      <div class="card scheme-card">
+        <h3>${escapeHtml(game.settings.defense)} Defense</h3>
+        <h4>Position Demands</h4>
+        <p class="muted"><strong>Most Critical:</strong> ${defenseProfile.critical.join(", ")}</p>
+        <p class="muted">${escapeHtml(defenseProfile.text)}</p>
       </div>
     </div>
   `;
@@ -2501,6 +2684,38 @@ function renderRecords() {
   `;
 }
 
+
+function playerPositionEditor(player) {
+  const offenseOptions = ["QB", "RB", "FB", "WR", "TE", "OL"];
+  const defenseOptions = ["DL", "LB", "CB", "S"];
+  const specialOptions = ["", "K", "P", "KR", "PR"];
+  const optionHtml = (options, selected) => options.map(option => `<option value="${option}" ${option === selected ? "selected" : ""}>${option || "None"}</option>`).join("");
+
+  return `
+    <div class="card" style="margin-bottom:14px">
+      <h3>Set Player Positions</h3>
+      <p class="muted">Change positions right here while looking at the player card.</p>
+      <div class="grid three">
+        <div><label class="muted small">Offense</label><select id="playerOffensePos">${optionHtml(offenseOptions, player.offensePosition)}</select></div>
+        <div><label class="muted small">Defense</label><select id="playerDefensePos">${optionHtml(defenseOptions, player.defensePosition)}</select></div>
+        <div><label class="muted small">Special Teams</label><select id="playerSpecialPos">${optionHtml(specialOptions, player.specialPosition || "")}</select></div>
+      </div>
+      <br><button id="savePlayerPositionsBtn">Save Player Positions</button>
+    </div>
+  `;
+}
+function bindPlayerPositionEditor(player) {
+  document.getElementById("savePlayerPositionsBtn")?.addEventListener("click", () => {
+    player.offensePosition = document.getElementById("playerOffensePos").value;
+    player.defensePosition = document.getElementById("playerDefensePos").value;
+    player.specialPosition = document.getElementById("playerSpecialPos").value;
+    saveLocalSilent();
+    toast(`${player.name}'s positions updated.`);
+    openPlayerCard(player.id);
+    if (currentView === "roster" || currentView === "depth") render();
+  });
+}
+
 function openPlayerCard(playerId) {
   const player = getPlayer(playerId);
   if (!player) return;
@@ -2525,6 +2740,7 @@ function openPlayerCard(playerId) {
     player.name,
     `${player.grade} • ${formatHeight(player.height)} • ${player.weight} lbs • Off ${player.offensePosition} • Def ${player.defensePosition}`,
     `
+      ${playerPositionEditor(player)}
       <div class="grid two">
         <div class="card">
           <h3>Ratings</h3>
@@ -2589,6 +2805,7 @@ function openPlayerCard(playerId) {
   );
 
   showModal();
+  bindPlayerPositionEditor(player);
 }
 
 function showIntroNewspaper() {
@@ -2668,7 +2885,7 @@ function repairScheduleIfNeeded() {
 
   if (!hasCurrentRivals || hasOldRivals || stroudGames.length < 10) {
     game.schedule = createSchedule();
-    toast("Schedule repaired for Chandler, Bristow, Prague, and Cushing.");
+    // schedule repaired silently
   }
 }
 
