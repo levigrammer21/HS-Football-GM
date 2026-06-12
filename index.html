@@ -35,61 +35,54 @@
   </section>
 
   <div id="gameApp" class="app hidden">
-    <aside class="sidebar">
-      <div class="brand">
+    <header class="topbar">
+      <div class="top-brand">
         <img src="./tiger-logo.png" alt="Stroud Tigers logo" />
         <div>
           <h1>HS Football GM</h1>
-          <p>Stroud Tigers</p>
+          <p id="topSubTitle">Stroud Tigers</p>
         </div>
       </div>
 
-      <nav id="nav" class="nav"></nav>
-
-      <div class="side-panel">
-        <div class="split">
-          <strong id="coachLabel">Coach</strong>
-          <span id="seasonBadge" class="pill">----</span>
-        </div>
-        <p id="authLabel" class="muted">Local save</p>
-
-        <div class="button-stack">
-          <button id="saveCloudBtn" class="secondary">Save Cloud</button>
-          <button id="loadCloudBtn" class="secondary">Load Cloud</button>
-          <button id="exportSaveBtn" class="secondary">Export Save</button>
-          <button id="restartDynastyBtn" class="gold">New Dynasty</button>
-        </div>
+      <div class="top-actions">
+        <button id="topSaveLocalBtn" class="icon-btn" title="Save Local">💾</button>
+        <button id="topSaveCloudBtn" class="icon-btn" title="Save Cloud">☁️</button>
+        <button id="topLoadCloudBtn" class="icon-btn" title="Load Cloud">⬇️</button>
+        <button id="topExportBtn" class="icon-btn" title="Export Save">📤</button>
+        <button id="settingsBtn" class="icon-btn" title="Settings">⚙️</button>
+        <button id="tutorialBtn" class="icon-btn" title="Tutorial">📖</button>
+        <button id="topNewDynastyBtn" class="icon-btn danger-icon" title="New Dynasty">🔄</button>
       </div>
+    </header>
 
-      <div class="side-panel">
-        <strong>Roster Rules</strong>
-        <p class="muted small">
-          Every player has an offensive position and defensive position. Depth chart usage is limited to
-          1 offense spot, 1 defense spot, and 1 special teams spot.
-        </p>
-      </div>
+    <div class="layout">
+      <aside class="sidebar">
+        <nav id="nav" class="nav"></nav>
 
-      <div class="side-panel">
-        <strong>Sound</strong>
-        <p class="muted small">Simple generated football-style sounds.</p>
-        <button id="soundToggleBtn" class="secondary">Sound: On</button>
-      </div>
-    </aside>
-
-    <main class="main">
-      <header class="hero">
-        <div>
-          <h2 id="pageTitle">Dashboard</h2>
-          <p id="pageSubtitle">Build the program. Develop the players. Win state.</p>
+        <div class="side-panel compact">
+          <div class="split">
+            <strong id="coachLabel">Coach</strong>
+            <span id="seasonBadge" class="pill">----</span>
+          </div>
+          <p id="authLabel" class="muted small">Local save</p>
+          <p id="prestigeLabel" class="muted small">Prestige: --</p>
         </div>
-        <div class="hero-actions">
-          <button id="saveLocalBtn" class="secondary">Local Save</button>
-          <button id="advanceWeekBtn" class="gold">Advance Week</button>
-        </div>
-      </header>
+      </aside>
 
-      <section id="view"></section>
-    </main>
+      <main class="main">
+        <section class="hero">
+          <div>
+            <h2 id="pageTitle">Dashboard</h2>
+            <p id="pageSubtitle">Build the program. Develop the players. Win state.</p>
+          </div>
+          <div class="hero-actions">
+            <button id="advanceWeekBtn" class="gold">Advance Week</button>
+          </div>
+        </section>
+
+        <section id="view"></section>
+      </main>
+    </div>
   </div>
 
   <div id="modalBackdrop" class="modal-backdrop hidden">

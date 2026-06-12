@@ -80,7 +80,9 @@ const DISTRICTS = {
 const MASCOTS = {
   Stroud: "Tigers",
   Chandler: "Lions",
+  Bristow: "Pirates",
   Prague: "Red Devils",
+  Cushing: "Tigers",
   Depew: "Hornets",
   Davenport: "Bulldogs",
   Bethel: "Wildcats",
@@ -115,8 +117,8 @@ const MASCOTS = {
   Wilburton: "Diggers"
 };
 
-const RIVALS = ["Chandler", "Prague", "Depew", "Davenport"];
-const EXTRA_TEAMS = ["Prague", "Depew", "Davenport"];
+const RIVALS = ["Chandler", "Bristow", "Prague", "Cushing"];
+const EXTRA_TEAMS = ["Bristow", "Cushing"];
 
 const OFFENSE_POSITIONS = ["QB", "RB", "FB", "WR1", "WR2", "WR3", "TE", "LT", "LG", "C", "RG", "RT"];
 const DEFENSE_POSITIONS = ["LE", "DT1", "DT2", "RE", "OLB1", "MLB", "OLB2", "CB1", "CB2", "FS", "SS"];
@@ -486,8 +488,8 @@ function createPlayer(grade = "FR") {
     weight: build.weight,
     stats,
     hidden: {
-      gamer: Math.random() < 0.23,
-      clutch: Math.random() < 0.12,
+      gamer: Math.random() < (0.20 + ((game?.prestige ?? 25) / 500)),
+      clutch: Math.random() < (0.10 + ((game?.prestige ?? 25) / 900)),
       footballIQ: bell(53, 18, 1, 99),
       workEthic: bell(56, 19, 1, 99),
       genetics: bell(56, 19, 1, 99)
@@ -787,7 +789,9 @@ function createNewDynastyIntro() {
         stateChampion: false
       }
     ],
-    news: []
+    news: [],
+    prestige: 25,
+    rivalries: createRivalries()
   };
 
   showApp();
@@ -848,7 +852,7 @@ function createSchedule() {
 
   for (const rival of RIVALS) {
     const opponent = teamByName(rival);
-    games.push(createGame(week, "team_stroud", opponent.id, rival === "Chandler" || rival === "Prague"));
+    games.push(createGame(week, "team_stroud", opponent.id, false));
     week += 1;
   }
 
@@ -1008,6 +1012,8 @@ function simulateGame(scheduledGame) {
 
   if (scheduledGame.homeId === "team_stroud" || scheduledGame.awayId === "team_stroud") {
     applyStroudStats(scheduledGame, activeDepth);
+    updateRivalryRecord(scheduledGame);
+    adjustPrestigeForGame(scheduledGame);
   }
 }
 
@@ -1348,6 +1354,7 @@ function makeWeeklyPaper(week, games) {
   let body = "The district picture shifted as another Friday night went final.";
   let gameStats = null;
   let injuries = [];
+  let rivalry = null;
 
   if (stroudGame) {
     const home = getTeam(stroudGame.homeId);
@@ -1370,6 +1377,20 @@ function makeWeeklyPaper(week, games) {
 
     gameStats = stroudGame.stats;
     injuries = stroudGame.injuries || [];
+
+    const opponent = stroudGame.homeId === "team_stroud" ? away : home;
+    if (RIVALS.includes(opponent.name)) {
+      const rivalryRecord = game.rivalries?.[opponent.name];
+      rivalry = rivalryRecord ? {
+        opponent: opponent.name,
+        mascot: opponent.mascot,
+        trophy: rivalryRecord.trophy,
+        stroudWins: rivalryRecord.stroudWins,
+        opponentWins: rivalryRecord.opponentWins,
+        streak: `${rivalryRecord.currentStreakTeam} +${rivalryRecord.currentStreak}`
+      } : null;
+      headline = `${rivalryRecord?.trophy || "Rivalry Game"}: ${headline}`;
+    }
   }
 
   const rare = game.players
@@ -1393,7 +1414,8 @@ function makeWeeklyPaper(week, games) {
     leaders: stateLeaders(),
     rare,
     gameStats,
-    injuries
+    injuries,
+    rivalry
   };
 }
 
@@ -1418,6 +1440,15 @@ function newspaperHtml() {
         <div>
           <h4>${escapeHtml(paper.headline)}</h4>
           <p>${escapeHtml(paper.body)}</p>
+
+          ${paper.rivalry ? `
+            <h4>Rivalry Watch</h4>
+            <div class="story">
+              <strong>${escapeHtml(paper.rivalry.trophy)}</strong><br>
+              Stroud ${paper.rivalry.stroudWins} • ${escapeHtml(paper.rivalry.opponent)} ${paper.rivalry.opponentWins}<br>
+              Current streak: ${escapeHtml(paper.rivalry.streak)}
+            </div>
+          ` : ""}
 
           <h4>Game Stats</h4>
           ${paper.gameStats ? gameStatsTable(paper.gameStats) : "<p>No Stroud game stats yet.</p>"}
@@ -1817,6 +1848,8 @@ function migrateSave() {
   game.awards ||= [];
   game.history ||= [];
   game.depth ||= emptyDepthChart();
+  game.prestige ??= 25;
+  game.rivalries ||= createRivalries();
 
   for (const player of game.players) {
     player.offensePosition ||= recommendPositions(player)[0] || "WR";
@@ -1882,6 +1915,8 @@ function showApp() {
   document.getElementById("authLabel").textContent = currentUser
     ? `${currentUser.isAnonymous ? "Guest" : "Google"} save available`
     : "Local only";
+  document.getElementById("prestigeLabel").textContent = game ? `Prestige: ${game.prestige ?? 25}` : "Prestige: --";
+  document.getElementById("topSubTitle").textContent = game?.coachName ? `Stroud Tigers • Coach ${game.coachName}` : "Stroud Tigers";
 }
 
 function render() {
@@ -1985,6 +2020,7 @@ function renderDashboard() {
           <div><span class="muted">Record</span><br><strong>${stroud.record.wins}-${stroud.record.losses}</strong></div>
           <div><span class="muted">District</span><br><strong>${stroud.record.districtWins}-${stroud.record.districtLosses}</strong></div>
           <div><span class="muted">Phase</span><br><strong>${escapeHtml(game.phase)}</strong></div>
+          <div><span class="muted">Prestige</span><br><strong>${game.prestige ?? 25}</strong></div>
         </div>
       </div>
 
@@ -2018,6 +2054,20 @@ function renderDashboard() {
       <div class="card">
         <h3>State Top 10</h3>
         ${rankingList(rankTeams().slice(0, 10))}
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h3>Rivalry Trophies</h3>
+      <div class="grid four">
+        ${Object.entries(game.rivalries || {}).map(([name, item]) => `
+          <div class="card">
+            <strong>${escapeHtml(item.trophy)}</strong><br>
+            <span class="muted">vs ${escapeHtml(name)}</span><br>
+            <span>Stroud ${item.stroudWins} - ${item.opponentWins}</span><br>
+            <span class="pill gold">${escapeHtml(item.currentStreakTeam)} +${item.currentStreak}</span>
+          </div>
+        `).join("")}
       </div>
     </div>
   `;
@@ -2577,6 +2627,203 @@ function saveLocalSilent() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(game));
 }
 
+
+/* -------------------------- Settings and tutorial ------------------------- */
+
+function openSettings() {
+  setModal(
+    "Settings",
+    "Audio, saves, display, and reset tools.",
+    `
+      <div class="grid two">
+        <div class="card">
+          <h3>Audio</h3>
+          <div class="settings-row">
+            <div>
+              <strong>Sounds</strong>
+              <p class="muted small">Menu clicks, whistle-style advance, injuries, and big newspaper moments.</p>
+            </div>
+            <button id="settingsSoundBtn" class="secondary">${soundEnabled ? "On" : "Off"}</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Save Tools</h3>
+          <div class="grid">
+            <button id="settingsSaveLocalBtn">Save Local</button>
+            <button id="settingsSaveCloudBtn" class="secondary">Save Cloud</button>
+            <button id="settingsLoadCloudBtn" class="secondary">Load Cloud</button>
+            <button id="settingsExportBtn" class="secondary">Export Save</button>
+            <button id="settingsClearCacheBtn" class="danger">Clear Cache & Reload</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <h3>Roster Rules</h3>
+        <p class="muted">
+          Every player has one offensive position and one defensive position on his player profile.
+          On the depth chart, a player can fill 1 offense spot, 1 defense spot, and 1 special teams spot.
+        </p>
+        <p class="muted">
+          Two-way starters lose a small amount of effectiveness by quarter:
+          Q1 100%, Q2 98%, Q3 96%, Q4 94%. Gamer and Clutch players can fight through that better.
+        </p>
+      </div>
+    `
+  );
+
+  showModal();
+
+  document.getElementById("settingsSoundBtn").addEventListener("click", () => {
+    soundEnabled = !soundEnabled;
+    document.getElementById("settingsSoundBtn").textContent = soundEnabled ? "On" : "Off";
+    playSound("click");
+  });
+
+  document.getElementById("settingsSaveLocalBtn").addEventListener("click", saveLocal);
+  document.getElementById("settingsSaveCloudBtn").addEventListener("click", saveCloud);
+  document.getElementById("settingsLoadCloudBtn").addEventListener("click", loadCloud);
+  document.getElementById("settingsExportBtn").addEventListener("click", exportSave);
+  document.getElementById("settingsClearCacheBtn").addEventListener("click", () => {
+    localStorage.clear();
+    location.reload();
+  });
+}
+
+function openTutorial() {
+  setModal(
+    "Coach Walkthrough",
+    "How to play HS Football GM.",
+    `
+      <div class="tutorial-section">
+        <h3>Welcome Coach</h3>
+        <p class="muted">
+          You took over Stroud after a 2-8 season. You do not recruit. Every year, 4-12 freshmen show up.
+          Your job is to develop them, find positions, survive the regular season, and make a run at state.
+        </p>
+      </div>
+
+      <div class="tutorial-section">
+        <h3>The Weekly Loop</h3>
+        <ol>
+          <li>Review the newspaper, rankings, standings, injuries, and notes.</li>
+          <li>Open player cards and look for clues about hidden traits.</li>
+          <li>Adjust schemes, practice focus, and the depth chart.</li>
+          <li>Advance the week and read the new Friday Night Paper.</li>
+        </ol>
+      </div>
+
+      <div class="tutorial-section">
+        <h3>Hidden Traits</h3>
+        <p class="muted">
+          Gamer and Clutch are true/false traits. Football IQ, Work Ethic, and Genetics are hidden ratings.
+          You never see exact values right away. Practices and games reveal ranges over time.
+        </p>
+      </div>
+
+      <div class="tutorial-section">
+        <h3>Positions and Depth Chart</h3>
+        <p class="muted">
+          Every player has an offensive and defensive position, but you can place anyone anywhere.
+          The game gives letter grades, not hard rules. A lineman can play QB if you want, but the results may be ugly.
+        </p>
+      </div>
+
+      <div class="tutorial-section">
+        <h3>Rivalries</h3>
+        <p class="muted">
+          Stroud plays Chandler, Bristow, Prague, and Cushing every year. Rivalry wins affect prestige,
+          newspaper coverage, and program history.
+        </p>
+      </div>
+
+      <div class="tutorial-section">
+        <h3>Playoffs</h3>
+        <p class="muted">
+          The regular season is 10 games. The playoffs are 16 teams and 4 single-elimination rounds:
+          Round 1, Quarterfinal, Semifinal, State Championship.
+        </p>
+      </div>
+    `
+  );
+
+  showModal();
+}
+
+function exportSave() {
+  if (!game) return;
+
+  const blob = new Blob([JSON.stringify(game, null, 2)], { type: "application/json" });
+  const anchor = document.createElement("a");
+  anchor.href = URL.createObjectURL(blob);
+  anchor.download = "hs-football-gm-save.json";
+  anchor.click();
+  URL.revokeObjectURL(anchor.href);
+}
+
+function updateRivalryRecord(scheduledGame) {
+  if (!scheduledGame || !(scheduledGame.homeId === "team_stroud" || scheduledGame.awayId === "team_stroud")) return;
+
+  const opponentId = scheduledGame.homeId === "team_stroud" ? scheduledGame.awayId : scheduledGame.homeId;
+  const opponent = getTeam(opponentId);
+  if (!opponent || !RIVALS.includes(opponent.name)) return;
+
+  game.rivalries ||= createRivalries();
+  const rivalry = game.rivalries[opponent.name];
+  if (!rivalry) return;
+
+  const stroudWon = (scheduledGame.homeId === "team_stroud" && scheduledGame.homeScore > scheduledGame.awayScore)
+    || (scheduledGame.awayId === "team_stroud" && scheduledGame.awayScore > scheduledGame.homeScore);
+
+  if (stroudWon) {
+    rivalry.stroudWins += 1;
+    rivalry.currentStreakTeam = "Stroud";
+    rivalry.currentStreak = rivalry.currentStreakTeam === "Stroud" ? rivalry.currentStreak + 1 : 1;
+  } else {
+    rivalry.opponentWins += 1;
+    rivalry.currentStreakTeam = opponent.name;
+    rivalry.currentStreak = rivalry.currentStreakTeam === opponent.name ? rivalry.currentStreak + 1 : 1;
+  }
+
+  const margin = Math.abs(scheduledGame.homeScore - scheduledGame.awayScore);
+  if (!rivalry.biggestGame || margin > rivalry.biggestGame.margin) {
+    rivalry.biggestGame = {
+      year: game.year,
+      margin,
+      score: `${scheduledGame.homeScore}-${scheduledGame.awayScore}`,
+      winner: stroudWon ? "Stroud" : opponent.name
+    };
+  }
+}
+
+function createRivalries() {
+  return {
+    Chandler: { trophy: "Route 66 Trophy", stroudWins: 21, opponentWins: 26, currentStreakTeam: "Chandler", currentStreak: 2, biggestGame: null },
+    Bristow: { trophy: "Creek County Classic", stroudWins: 17, opponentWins: 14, currentStreakTeam: "Stroud", currentStreak: 1, biggestGame: null },
+    Prague: { trophy: "Lincoln County Cup", stroudWins: 18, opponentWins: 19, currentStreakTeam: "Prague", currentStreak: 1, biggestGame: null },
+    Cushing: { trophy: "Pipeline Trophy", stroudWins: 12, opponentWins: 22, currentStreakTeam: "Cushing", currentStreak: 3, biggestGame: null }
+  };
+}
+
+function adjustPrestigeForGame(scheduledGame) {
+  if (!scheduledGame || !(scheduledGame.homeId === "team_stroud" || scheduledGame.awayId === "team_stroud")) return;
+
+  const opponent = getTeam(scheduledGame.homeId === "team_stroud" ? scheduledGame.awayId : scheduledGame.homeId);
+  const stroudWon = (scheduledGame.homeId === "team_stroud" && scheduledGame.homeScore > scheduledGame.awayScore)
+    || (scheduledGame.awayId === "team_stroud" && scheduledGame.awayScore > scheduledGame.homeScore);
+  const margin = Math.abs(scheduledGame.homeScore - scheduledGame.awayScore);
+
+  let change = 0;
+  if (stroudWon) change += RIVALS.includes(opponent.name) ? 3 : 1;
+  else change -= margin >= 28 ? 2 : 1;
+
+  if (scheduledGame.playoff && stroudWon) change += 4;
+  if (scheduledGame.district && stroudWon) change += 2;
+
+  game.prestige = clamp((game.prestige ?? 25) + change, 1, 99);
+}
+
 /* ------------------------------- Listeners ------------------------------- */
 
 document.getElementById("googleSignInBtn").addEventListener("click", async () => {
@@ -2604,38 +2851,26 @@ document.getElementById("guestSignInBtn").addEventListener("click", async () => 
 });
 
 document.getElementById("newDynastyBtn").addEventListener("click", createNewDynastyIntro);
-document.getElementById("restartDynastyBtn").addEventListener("click", createNewDynastyIntro);
+document.getElementById("topNewDynastyBtn").addEventListener("click", createNewDynastyIntro);
 document.getElementById("advanceWeekBtn").addEventListener("click", advanceWeek);
-document.getElementById("saveLocalBtn").addEventListener("click", saveLocal);
-document.getElementById("saveCloudBtn").addEventListener("click", saveCloud);
-document.getElementById("loadCloudBtn").addEventListener("click", loadCloud);
+
+document.getElementById("topSaveLocalBtn").addEventListener("click", saveLocal);
+document.getElementById("topSaveCloudBtn").addEventListener("click", saveCloud);
+document.getElementById("topLoadCloudBtn").addEventListener("click", loadCloud);
+document.getElementById("topExportBtn").addEventListener("click", exportSave);
+
 document.getElementById("loadCloudBtnLogin").addEventListener("click", loadCloud);
+document.getElementById("settingsBtn").addEventListener("click", openSettings);
+document.getElementById("tutorialBtn").addEventListener("click", openTutorial);
 
 document.getElementById("clearCacheBtn").addEventListener("click", () => {
   localStorage.clear();
   location.reload();
 });
 
-document.getElementById("soundToggleBtn").addEventListener("click", () => {
-  soundEnabled = !soundEnabled;
-  document.getElementById("soundToggleBtn").textContent = `Sound: ${soundEnabled ? "On" : "Off"}`;
-  playSound("click");
-});
-
 document.getElementById("closeModalBtn").addEventListener("click", closeModal);
 document.getElementById("modalBackdrop").addEventListener("click", event => {
   if (event.target.id === "modalBackdrop") closeModal();
-});
-
-document.getElementById("exportSaveBtn").addEventListener("click", () => {
-  if (!game) return;
-
-  const blob = new Blob([JSON.stringify(game, null, 2)], { type: "application/json" });
-  const anchor = document.createElement("a");
-  anchor.href = URL.createObjectURL(blob);
-  anchor.download = "hs-football-gm-save.json";
-  anchor.click();
-  URL.revokeObjectURL(anchor.href);
 });
 
 document.getElementById("importSaveBtnLogin").addEventListener("click", () => {
