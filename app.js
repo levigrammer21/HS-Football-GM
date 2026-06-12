@@ -1,6 +1,6 @@
 
 "use strict";
-const BUILD_VERSION = "v0.0.17-alpha";
+const BUILD_VERSION = "v0.0.18-alpha";
 const BUILD_DATE = "2026-06-12";
 
 function reportFatalError(error) {
@@ -1185,23 +1185,6 @@ function roleFullText(playerId, side) {
   if (!roles.length) return "JV";
   return roles.map(role => `${role.type} ${role.position}`).join(" / ");
 }
-function rolesForSide(playerId, side) {
-  return playerDepthRoles(playerId).filter(role => role.side === side);
-}
-function roleDotHtml(role) {
-  if (!role) return `<span class="role-dot jv">JV</span>`;
-  return `<span class="role-dot ${role.type === "Starter" ? "starter" : "backup"}">${role.position}</span>`;
-}
-function roleDotsForSide(playerId, side) {
-  const roles = rolesForSide(playerId, side);
-  if (!roles.length) return roleDotHtml(null);
-  return roles.map(roleDotHtml).join("");
-}
-function roleTextForDropdown(playerId, side) {
-  const roles = rolesForSide(playerId, side);
-  if (!roles.length) return "JV";
-  return roles.map(role => `${role.type === "Starter" ? "🟢" : "🟡"} ${role.position}`).join("/");
-}
 function playerVarsityStatus(playerId) {
   const roles = playerDepthRoles(playerId);
   if (!roles.length) return "JV";
@@ -1235,7 +1218,18 @@ function varsityCounts() {
   return { varsity: varsityIds.size, jv: Math.max(0, game.players.length - varsityIds.size) };
 }
 function rosterRoleForSide(playerId, side) { return roleFullText(playerId, side); }
-function depthDropdownRoles(player) { return `${roleTextForDropdown(player.id, "offense")}, ${roleTextForDropdown(player.id, "defense")}`; }
+function roleTextForDropdown(playerId, side) {
+  const roles = playerDepthRoles(playerId).filter(role => role.side === side);
+  if (!roles.length) return "JV";
+  return roles.map(role => `${role.type === "Starter" ? "●" : "○"} ${role.position}`).join("/");
+}
+
+function depthDropdownRoles(player) {
+  return `${roleTextForDropdown(player.id, "offense")}, ${roleTextForDropdown(player.id, "defense")}`;
+}
+function positionLabelForDropdown(player, position) {
+  return `${player.name} • ${player.grade} • ${formatHeight(player.height)} ${player.weight} • ${depthDropdownRoles(player)} • Here: ${letterGrade(positionFit(player, position))}`;
+}
 
 function playerCurrentRoleText(player) {
   if (!player) return "";
@@ -2905,97 +2899,49 @@ function rankingList(teams) {
 
 function renderRoster() {
   const counts = varsityCounts();
-  const sortKey = window.rosterSortKey || "name";
-  const sortDir = window.rosterSortDir || "asc";
-  const columns = [
-    ["name", "Name"], ["status", "Status"], ["offense", "O"], ["defense", "D"], ["special", "ST"],
-    ["grade", "Yr"], ["height", "Ht"], ["weight", "Wt"], ["speed", "Spd"], ["accel", "Acc"],
-    ["strength", "Str"], ["agility", "Agi"], ["stamina", "Sta"], ["armStrength", "Arm"],
-    ["throwAccuracy", "ThA"], ["catching", "Cat"], ["carry", "Car"], ["blocking", "Blk"],
-    ["tackling", "Tkl"], ["coverage", "Cov"], ["vision", "Vis"], ["pursuit", "Pur"],
-    ["kickPower", "KP"], ["kickAccuracy", "KA"]
-  ];
-  const sorted = sortedRosterPlayers(sortKey, sortDir);
-
   document.getElementById("view").innerHTML = `
     <div class="card">
       <div class="split">
-        <h3>Roster <span class="sort-hint">Tap headers to sort</span></h3>
+        <h3>Roster</h3>
         <div class="row">
           <span class="status-pill starter">Varsity ${counts.varsity}</span>
           <span class="status-pill jv">JV ${counts.jv}</span>
           <span class="pill">${game.players.length} players</span>
         </div>
       </div>
-      <p class="muted small">O/D/ST show actual depth-chart roles only. Unassigned players show JV.</p>
-      <div class="table-wrap">
-        <table class="roster-table">
-          <thead><tr>${columns.map(([key, label]) => `<th data-roster-sort="${key}">${label}${sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : ""}</th>`).join("")}</tr></thead>
-          <tbody>
-            ${sorted.map(player => `
-              <tr>
-                <td><span class="player-name" data-player-id="${player.id}">${escapeHtml(player.name)}</span></td>
-                <td>${playerStatusPill(player.id)}</td>
-                <td>${escapeHtml(rolePositionOnly(player.id, "offense"))}</td>
-                <td>${escapeHtml(rolePositionOnly(player.id, "defense"))}</td>
-                <td>${escapeHtml(rolePositionOnly(player.id, "special"))}</td>
-                <td>${player.grade}</td>
-                <td>${formatHeight(player.height)}</td>
-                <td>${player.weight}</td>
-                <td>${player.stats.speed}</td>
-                <td>${player.stats.accel}</td>
-                <td>${player.stats.strength}</td>
-                <td>${player.stats.agility}</td>
-                <td>${player.stats.stamina}</td>
-                <td>${player.stats.armStrength}</td>
-                <td>${player.stats.throwAccuracy}</td>
-                <td>${player.stats.catching}</td>
-                <td>${player.stats.carry}</td>
-                <td>${player.stats.blocking}</td>
-                <td>${player.stats.tackling}</td>
-                <td>${player.stats.coverage}</td>
-                <td>${player.stats.vision}</td>
-                <td>${player.stats.pursuit}</td>
-                <td>${player.stats.kickPower}</td>
-                <td>${player.stats.kickAccuracy}</td>
-              </tr>
-            `).join("")}
-          </tbody>
-        </table>
+      <p class="muted small">Roles shown here are actual varsity depth-chart roles. If a player is not in the two-deep, he is JV.</p>
+      <div class="roster-card-list">
+        ${game.players.map(player => `
+          <div class="roster-player-card">
+            <div class="roster-player-top">
+              <div>
+                <div class="roster-player-name" data-player-id="${player.id}">${escapeHtml(player.name)}</div>
+                <div class="muted small">${player.grade} • ${formatHeight(player.height)} • ${player.weight} lbs</div>
+              </div>
+              ${playerStatusPill(player.id)}
+            </div>
+            <div class="roster-role-row">
+              <span class="pill">O: ${escapeHtml(rolePositionOnly(player.id, "offense"))}</span>
+              <span class="pill">D: ${escapeHtml(rolePositionOnly(player.id, "defense"))}</span>
+              <span class="pill">ST: ${escapeHtml(rolePositionOnly(player.id, "special"))}</span>
+            </div>
+            <div class="roster-stat-row">
+              <div class="roster-stat-box"><span>Speed</span>${player.stats.speed}</div>
+              <div class="roster-stat-box"><span>Strength</span>${player.stats.strength}</div>
+              <div class="roster-stat-box"><span>Agility</span>${player.stats.agility}</div>
+              <div class="roster-stat-box"><span>Blocking</span>${player.stats.blocking}</div>
+              <div class="roster-stat-box"><span>Tackling</span>${player.stats.tackling}</div>
+              <div class="roster-stat-box"><span>Coverage</span>${player.stats.coverage}</div>
+              <div class="roster-stat-box"><span>Carry</span>${player.stats.carry}</div>
+              <div class="roster-stat-box"><span>Arm</span>${player.stats.armStrength}</div>
+            </div>
+          </div>
+        `).join("")}
       </div>
     </div>`;
-  document.querySelectorAll("[data-player-id]").forEach(node => node.addEventListener("click", () => openPlayerCard(Number(node.dataset.playerId))));
-  document.querySelectorAll("[data-roster-sort]").forEach(header => {
-    header.addEventListener("click", () => {
-      const key = header.dataset.rosterSort;
-      if (window.rosterSortKey === key) window.rosterSortDir = window.rosterSortDir === "asc" ? "desc" : "asc";
-      else {
-        window.rosterSortKey = key;
-        window.rosterSortDir = ["name","status","offense","defense","special","grade"].includes(key) ? "asc" : "desc";
-      }
-      renderRoster();
-    });
+  document.querySelectorAll("[data-player-id]").forEach(node => {
+    node.addEventListener("click", () => openPlayerCard(Number(node.dataset.playerId)));
   });
-}
-function sortedRosterPlayers(sortKey, sortDir) {
-  const dir = sortDir === "asc" ? 1 : -1;
-  return [...game.players].sort((a, b) => {
-    const av = rosterSortValue(a, sortKey);
-    const bv = rosterSortValue(b, sortKey);
-    if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
-    return String(av).localeCompare(String(bv)) * dir;
-  });
-}
-function rosterSortValue(player, key) {
-  if (key === "name") return player.name;
-  if (key === "status") return playerSimpleStatus(player.id);
-  if (key === "offense") return rolePositionOnly(player.id, "offense");
-  if (key === "defense") return rolePositionOnly(player.id, "defense");
-  if (key === "special") return rolePositionOnly(player.id, "special");
-  if (key === "grade") return ["FR", "SO", "JR", "SR"].indexOf(player.grade);
-  if (key === "height") return player.height;
-  if (key === "weight") return player.weight;
-  return player.stats[key] ?? 0;
 }
 
 function getDepthSortMode() { return window.depthSortMode || "best"; }
@@ -3023,7 +2969,7 @@ function renderDepth() {
         <option value="best">Best Here</option>
         <option value="name">Name</option>
       </select>
-      <span class="depth-sort-note">Dropdown labels show O/D role or JV, plus projected grade here.</span>
+      <span class="depth-sort-note">● starter • ○ backup • JV not in two-deep</span>
     </div>
     <div class="depth-tabs">
       ${[["offense","Offense"],["defense","Defense"],["special","Special Teams"]].map(([side,label]) => `<button data-depth-tab="${side}" class="${activeSide === side ? "active" : ""}">${label}</button>`).join("")}
@@ -3105,7 +3051,7 @@ function renderDepthSelect(side, position, slot, selectedId) {
       ${sortedPlayersForDepth(position).map(candidate => `<option value="${candidate.id}" ${candidate.id === selectedId ? "selected" : ""}>${escapeHtml(positionLabelForDropdown(candidate, position))}</option>`).join("")}
     </select>
     <div class="depth-player-mini"><span class="pill ${gradeClassName}">Here: ${grade}</span></div>
-    ${player ? `<div class="depth-context"><div class="role-chip-row">O: ${roleDotsForSide(player.id, "offense")} D: ${roleDotsForSide(player.id, "defense")}</div></div>` : ""}
+    ${player ? `<div class="depth-context">${playerStatusPill(player.id)}<br>O: ${escapeHtml(rolePositionOnly(player.id, "offense"))} • D: ${escapeHtml(rolePositionOnly(player.id, "defense"))}</div>` : ""}
   </div>`;
 }
 

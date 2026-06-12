@@ -1046,12 +1046,9 @@ tr:hover td {
 
 .roster-card-list{display:grid;gap:10px}.roster-player-card{border:1px solid rgba(255,255,255,.10);border-radius:16px;background:rgba(255,255,255,.035);padding:12px}.roster-player-top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap}.roster-player-name{font-weight:950;font-size:16px;cursor:pointer}.roster-role-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.roster-stat-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:10px}.roster-stat-box{background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.08);border-radius:11px;padding:7px;font-size:12px}.roster-stat-box span{color:var(--muted);display:block;font-size:10px}.depth-position-label{font-weight:950;color:var(--gold);font-size:16px}.depth-sort-note{color:var(--muted);font-size:11px}@media(max-width:600px){.roster-stat-row{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
-.role-dot{display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:24px;border-radius:999px;padding:0 8px;font-size:11px;font-weight:950;border:1px solid rgba(255,255,255,.18)}
-.role-dot.starter{color:#0b2017;background:#48e59b;border-color:rgba(72,229,155,.65)}
-.role-dot.backup{color:#251b03;background:#ffd166;border-color:rgba(255,209,102,.75)}
-.role-dot.jv{color:var(--muted);background:rgba(255,255,255,.06)}
-.role-chip-row{display:flex;gap:5px;flex-wrap:wrap;margin-top:5px}
-.sort-hint{color:var(--muted);font-size:11px;margin-left:8px}
-.roster-table th{cursor:pointer}
-.roster-table td:first-child{position:sticky;left:0;background:#0d1726;z-index:1}
-.roster-table th:first-child{position:sticky;left:0;z-index:3}
+.depth-context {
+  padding-top: 4px;
+}
+.depth-sort-note {
+  opacity: .9;
+}
