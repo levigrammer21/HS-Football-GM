@@ -1,6 +1,6 @@
 
 "use strict";
-const BUILD_VERSION = "v0.0.13-alpha";
+const BUILD_VERSION = "v0.0.14-alpha";
 const BUILD_DATE = "2026-06-12";
 
 function reportFatalError(error) {
@@ -1162,6 +1162,7 @@ function confirmNewDynasty() {
   }
 }
 
+
 function playerDepthRoles(playerId) {
   const roles = [];
   if (!game?.depth || !playerId) return roles;
@@ -1179,10 +1180,7 @@ function playerDepthRoles(playerId) {
 function playerVarsityStatus(playerId) {
   const roles = playerDepthRoles(playerId);
   if (!roles.length) return "JV";
-
-  const starters = roles.filter(role => role.type === "Starter").map(role => `${role.type} ${role.position}`);
-  const backups = roles.filter(role => role.type === "Backup").map(role => `${role.type} ${role.position}`);
-  return [...starters, ...backups].join(" / ");
+  return roles.map(role => `${role.type} ${role.position}`).join(" / ");
 }
 
 function playerSimpleStatus(playerId) {
@@ -1221,6 +1219,15 @@ function varsityCounts() {
   };
 }
 
+function rosterRoleForSide(playerId, side) {
+  const roles = playerDepthRoles(playerId).filter(role => role.side === side);
+  if (!roles.length) return "JV";
+  return roles.map(role => `${role.type} ${role.position}`).join(" / ");
+}
+
+function positionLabelForDropdown(player, position) {
+  return `${player.name} • ${player.grade} • ${formatHeight(player.height)} ${player.weight} • ${playerSimpleStatus(player.id)} • Here: ${letterGrade(positionFit(player, position))}`;
+}
 
 function playerCurrentRoleText(player) {
   if (!player) return "";
@@ -1235,8 +1242,7 @@ function currentAssignedGradeText(player) {
   return grades.join(" • ");
 }
 function depthOptionLabel(player, position) {
-  const projected = letterGrade(positionFit(player, position));
-  return `${player.name} • ${player.grade} • ${formatHeight(player.height)} ${player.weight} • ${playerSimpleStatus(player.id)} • Here: ${projected}`;
+  return positionLabelForDropdown(player, position);
 }
 
 function advanceWeek() {
@@ -2890,69 +2896,58 @@ function rankingList(teams) {
 }
 
 function renderRoster() {
-  let players = [...game.players];
-  const key = rosterSort.key;
-
-  players.sort((a, b) => {
-    const av = rosterSortValue(a, key);
-    const bv = rosterSortValue(b, key);
-    return av > bv ? rosterSort.dir : av < bv ? -rosterSort.dir : 0;
-  });
-
-  const headers = [
-    ["name", "Name"],
-    ["grade", "Yr"],
-    ["offensePosition", "Off"],
-    ["defensePosition", "Def"],
-    ["height", "Ht"],
-    ["weight", "Wt"],
-    ["speed", "Spd"],
-    ["strength", "Str"],
-    ["agility", "Agi"],
-    ["armStrength", "Arm"],
-    ["throwAccuracy", "Acc"],
-    ["catching", "Cat"],
-    ["ballCarrying", "Carry"],
-    ["blocking", "Blk"],
-    ["tackling", "Tkl"],
-    ["coverage", "Cov"],
-    ["vision", "Vis"]
-  ];
+  const counts = varsityCounts();
 
   document.getElementById("view").innerHTML = `
     <div class="card">
       <div class="split">
         <h3>Roster</h3>
-        <span class="pill blue">${players.length} players</span>
+        <div class="row">
+          <span class="status-pill starter">Varsity ${counts.varsity}</span>
+          <span class="status-pill jv">JV ${counts.jv}</span>
+          <span class="pill">${game.players.length} players</span>
+        </div>
       </div>
+
+      <p class="muted small">
+        Offense/Defense columns show actual varsity depth-chart roles. If a player is not in the two-deep, he shows JV.
+      </p>
 
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
-              ${headers.map(([sortKey, label]) => `<th data-sort="${sortKey}">${label}</th>`).join("")}
+              <th>Name</th>
+              <th>Status</th>
+              <th>Offense</th>
+              <th>Defense</th>
+              <th>ST</th>
+              <th>Yr</th>
+              <th>Ht</th>
+              <th>Wt</th>
+              <th>Spd</th>
+              <th>Str</th>
+              <th>Agi</th>
+              <th>Blk</th>
+              <th>Tkl</th>
             </tr>
           </thead>
           <tbody>
-            ${players.map(player => `
+            ${game.players.map(player => `
               <tr>
                 <td><span class="player-name" data-player-id="${player.id}">${escapeHtml(player.name)}</span></td>
+                <td>${playerStatusPill(player.id)}</td>
+                <td>${escapeHtml(rosterRoleForSide(player.id, "offense"))}</td>
+                <td>${escapeHtml(rosterRoleForSide(player.id, "defense"))}</td>
+                <td>${escapeHtml(rosterRoleForSide(player.id, "special"))}</td>
                 <td>${player.grade}</td>
-                <td>${escapeHtml(player.offensePosition || "-")}</td>
-                <td>${escapeHtml(player.defensePosition || "-")}</td>
                 <td>${formatHeight(player.height)}</td>
                 <td>${player.weight}</td>
                 <td>${player.stats.speed}</td>
                 <td>${player.stats.strength}</td>
                 <td>${player.stats.agility}</td>
-                <td>${player.stats.armStrength}</td>
-                <td>${player.stats.throwAccuracy}</td>
-                <td>${player.stats.catching}</td>
-                <td>${player.stats.ballCarrying}</td>
                 <td>${player.stats.blocking}</td>
                 <td>${player.stats.tackling}</td>
-                <td>${player.stats.coverage}</td>
-                <td>${player.stats.vision}</td>
               </tr>
             `).join("")}
           </tbody>
@@ -2962,26 +2957,8 @@ function renderRoster() {
   `;
 
   document.querySelectorAll("[data-player-id]").forEach(node => {
-    node.addEventListener("click", () => openPlayerCard(node.dataset.playerId));
+    node.addEventListener("click", () => openPlayerCard(Number(node.dataset.playerId)));
   });
-
-  document.querySelectorAll("[data-sort]").forEach(node => {
-    node.addEventListener("click", () => {
-      if (rosterSort.key === node.dataset.sort) rosterSort.dir *= -1;
-      else rosterSort = { key: node.dataset.sort, dir: 1 };
-      renderRoster();
-    });
-  });
-}
-
-function rosterSortValue(player, key) {
-  if (key === "name") return player.name;
-  if (key === "grade") return gradeValue(player.grade);
-  if (key === "height") return player.height;
-  if (key === "weight") return player.weight;
-  if (key === "offensePosition") return player.offensePosition || "";
-  if (key === "defensePosition") return player.defensePosition || "";
-  return player.stats[key] || 0;
 }
 
 function renderDepth() {
@@ -3111,7 +3088,7 @@ function renderDepthSelect(side, position, slot, selectedId) {
         <option value="">Empty</option>
         ${game.players.map(candidate => `
           <option value="${candidate.id}" ${candidate.id === selectedId ? "selected" : ""}>
-            ${escapeHtml(depthOptionLabel(candidate, position))}
+            ${escapeHtml(positionLabelForDropdown(candidate, position))}
           </option>
         `).join("")}
       </select>
@@ -3371,7 +3348,7 @@ function playerPositionEditor(player) {
     <div class="card" style="margin-bottom:14px">
       <h3>Set Player Positions</h3>
       <p>${playerStatusPill(player.id)} <span class="muted">${escapeHtml(playerVarsityStatus(player.id))}</span></p>
-      <p class="muted">Change position labels here. Actual playing time comes from the varsity depth chart.</p>
+      <p class="muted">These are scout/projected labels only. Actual playing time comes from the varsity depth chart.</p>
       <div class="grid three">
         <div><label class="muted small">Offense</label><select id="playerOffensePos">${optionHtml(offenseOptions, player.offensePosition)}</select></div>
         <div><label class="muted small">Defense</label><select id="playerDefensePos">${optionHtml(defenseOptions, player.defensePosition)}</select></div>

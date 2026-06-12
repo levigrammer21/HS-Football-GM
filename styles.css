@@ -998,3 +998,29 @@ tr:hover td {
   gap: 8px;
   flex-wrap: wrap;
 }
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 900;
+  border: 1px solid rgba(255,255,255,.16);
+  background: rgba(255,255,255,.05);
+  white-space: nowrap;
+}
+.status-pill.starter {
+  color: var(--green);
+  border-color: rgba(72,229,155,.42);
+  background: rgba(72,229,155,.08);
+}
+.status-pill.backup {
+  color: #9ec5ff;
+  border-color: rgba(46,123,255,.45);
+  background: rgba(46,123,255,.08);
+}
+.status-pill.jv {
+  color: var(--muted);
+  border-color: rgba(255,255,255,.14);
+}
