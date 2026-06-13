@@ -1,6 +1,6 @@
 
 "use strict";
-const BUILD_VERSION = "v0.0.34-alpha";
+const BUILD_VERSION = "v0.0.35-alpha";
 const BUILD_DATE = "2026-06-12";
 
 function reportFatalError(error) {
@@ -1288,6 +1288,9 @@ function latestNewspaper() {
 }
 
 function buildSafeWatchEvents(finishedGame) {
+  if (finishedGame?.watchEvents?.length) return finishedGame.watchEvents;
+
+
   const home = getTeam(finishedGame.homeId) || { name: "Home" };
   const away = getTeam(finishedGame.awayId) || { name: "Away" };
   const homeFinal = Number(finishedGame.homeScore || 0);
@@ -1832,36 +1835,542 @@ function runRegularWeek() {
   game.week += 1;
 }
 
+
+function p2Avg(values, fallback = 50) {
+  const clean = values.map(v => Number(v)).filter(v => Number.isFinite(v));
+  if (!clean.length) return fallback;
+  return clean.reduce((sum, value) => sum + value, 0) / clean.length;
+}
+
+function statOf(player, key, fallback = 50) {
+  if (!player) return fallback;
+  const aliases = {
+    carry: ["carry", "ballCarrying"],
+    ballCarrying: ["ballCarrying", "carry"],
+    accel: ["accel", "acceleration"],
+    acceleration: ["acceleration", "accel"]
+  }[key] || [key];
+
+  for (const alias of aliases) {
+    const value = Number(player.stats?.[alias]);
+    if (Number.isFinite(value)) return value;
+  }
+  return fallback;
+}
+
+function activeSchemeForTeam(team) {
+  return team.id === "team_stroud" ? game.settings.offense : team.offense;
+}
+
+function schemeRunRate(scheme) {
+  const profile = SCHEME_PROFILES[scheme] || SCHEME_PROFILES["Pro Style"];
+  const match = profile.runPass.match(/(\d+)% run/);
+  return clamp(Number(match?.[1] || 50) / 100, 0.12, 0.90);
+}
+
+function getDepthPlayer(depth, side, pos, slot = 0) {
+  return getPlayer(depth?.[side]?.[pos]?.[slot]);
+}
+
+function pbpOffenseRoster(team, activeDepth) {
+  if (team.id !== "team_stroud") return null;
+
+  return {
+    QB: getDepthPlayer(activeDepth, "offense", "QB"),
+    RB: getDepthPlayer(activeDepth, "offense", "RB"),
+    FB: getDepthPlayer(activeDepth, "offense", "FB"),
+    WR1: getDepthPlayer(activeDepth, "offense", "WR1"),
+    WR2: getDepthPlayer(activeDepth, "offense", "WR2"),
+    WR3: getDepthPlayer(activeDepth, "offense", "WR3"),
+    TE: getDepthPlayer(activeDepth, "offense", "TE"),
+    LT: getDepthPlayer(activeDepth, "offense", "LT"),
+    LG: getDepthPlayer(activeDepth, "offense", "LG"),
+    C: getDepthPlayer(activeDepth, "offense", "C"),
+    RG: getDepthPlayer(activeDepth, "offense", "RG"),
+    RT: getDepthPlayer(activeDepth, "offense", "RT")
+  };
+}
+
+function pbpDefenseRoster(team, activeDepth) {
+  if (team.id !== "team_stroud") return null;
+  const out = {};
+  for (const pos of DEFENSE_POSITIONS) out[pos] = getDepthPlayer(activeDepth, "defense", pos);
+  return out;
+}
+
+function pbpLineGrade(roster) {
+  if (!roster) return 50;
+  return p2Avg(["LT", "LG", "C", "RG", "RT"].map(pos => {
+    const p = roster[pos];
+    return p2Avg([statOf(p, "blocking"), statOf(p, "strength"), statOf(p, "agility")], 45);
+  }), 50);
+}
+
+function pbpRunTalent(team, scheme, roster) {
+  if (team.id !== "team_stroud") return team.offenseRating || team.power || 50;
+
+  const qb = roster.QB;
+  const rb = roster.RB;
+  const fb = roster.FB;
+  const line = pbpLineGrade(roster);
+  const qbRun = p2Avg([statOf(qb, "speed"), statOf(qb, "agility"), statOf(qb, "carry"), statOf(qb, "vision")]);
+  const rbRun = p2Avg([statOf(rb, "speed"), statOf(rb, "agility"), statOf(rb, "carry"), statOf(rb, "vision")]);
+  const fbRun = p2Avg([statOf(fb, "strength"), statOf(fb, "carry"), statOf(fb, "blocking"), statOf(fb, "vision")]);
+
+  if (["Option", "Flexbone"].includes(scheme)) return qbRun * .34 + rbRun * .24 + fbRun * .14 + line * .28;
+  if (scheme === "Wing-T") return fbRun * .30 + rbRun * .26 + qbRun * .10 + line * .34;
+  if (["Power-I", "Wishbone"].includes(scheme)) return rbRun * .31 + fbRun * .23 + qbRun * .08 + line * .38;
+  return rbRun * .34 + qbRun * .08 + line * .36 + 8;
+}
+
+function pbpPassTalent(team, scheme, roster) {
+  if (team.id !== "team_stroud") return team.offenseRating || team.power || 50;
+
+  const qb = roster.QB;
+  const receivers = [roster.WR1, roster.WR2, roster.WR3, roster.TE, roster.RB].filter(Boolean);
+  const qbPass = p2Avg([statOf(qb, "armStrength"), statOf(qb, "throwAccuracy"), statOf(qb, "vision")]);
+  const rec = p2Avg(receivers.map(p => p2Avg([statOf(p, "speed"), statOf(p, "catching"), statOf(p, "agility")], 45)), 45);
+  return qbPass * .50 + rec * .32 + pbpLineGrade(roster) * .18;
+}
+
+function pbpDefTalent(team, activeDepth) {
+  if (team.id !== "team_stroud") return team.defenseRating || team.power || 50;
+
+  const defense = pbpDefenseRoster(team, activeDepth);
+  return p2Avg(Object.values(defense).filter(Boolean).map(p =>
+    p2Avg([statOf(p, "tackling"), statOf(p, "pursuit"), statOf(p, "strength"), statOf(p, "speed")], 45)
+  ), 50);
+}
+
+function pbpRunnerWeights(scheme, roster) {
+  if (!roster) return [];
+  const weights = {
+    "Air Raid": { QB: 0.05, RB: 0.82, FB: 0.02, WR1: 0.05, WR2: 0.04, WR3: 0.02 },
+    "Spread": { QB: 0.12, RB: 0.72, FB: 0.02, WR1: 0.06, WR2: 0.05, WR3: 0.03 },
+    "Pro Style": { QB: 0.06, RB: 0.76, FB: 0.10, WR1: 0.03, WR2: 0.03, TE: 0.02 },
+    "Option": { QB: 0.36, RB: 0.34, FB: 0.22, WR1: 0.04, WR2: 0.04 },
+    "Wing-T": { QB: 0.10, RB: 0.36, FB: 0.38, WR1: 0.08, WR2: 0.08 },
+    "Power-I": { QB: 0.04, RB: 0.58, FB: 0.32, TE: 0.03, WR1: 0.03 },
+    "Flexbone": { QB: 0.34, RB: 0.30, FB: 0.30, WR1: 0.03, WR2: 0.03 },
+    "Wishbone": { QB: 0.22, RB: 0.38, FB: 0.34, WR1: 0.03, WR2: 0.03 }
+  }[scheme] || { QB: .08, RB: .75, FB: .08, WR1: .04, WR2: .03, TE: .02 };
+
+  return Object.entries(weights)
+    .map(([pos, weight]) => ({ id: roster[pos]?.id, player: roster[pos], pos, weight }))
+    .filter(item => item.player && item.weight > 0);
+}
+
+function pbpReceiverWeights(scheme, roster) {
+  if (!roster) return [];
+  const weights = {
+    "Air Raid": { WR1: 0.28, WR2: 0.25, WR3: 0.22, TE: 0.12, RB: 0.13 },
+    "Spread": { WR1: 0.25, WR2: 0.22, WR3: 0.18, TE: 0.15, RB: 0.20 },
+    "Pro Style": { WR1: 0.25, WR2: 0.20, TE: 0.24, RB: 0.18, FB: 0.04, WR3: 0.09 },
+    "Option": { WR1: 0.35, WR2: 0.25, TE: 0.20, RB: 0.12, FB: 0.08 },
+    "Wing-T": { WR1: 0.30, WR2: 0.24, TE: 0.24, RB: 0.12, FB: 0.10 },
+    "Power-I": { WR1: 0.25, WR2: 0.20, TE: 0.26, RB: 0.14, FB: 0.15 },
+    "Flexbone": { WR1: 0.32, WR2: 0.24, TE: 0.20, RB: 0.14, FB: 0.10 },
+    "Wishbone": { WR1: 0.30, WR2: 0.22, TE: 0.22, RB: 0.14, FB: 0.12 }
+  }[scheme] || { WR1: .26, WR2: .22, WR3: .16, TE: .18, RB: .18 };
+
+  return Object.entries(weights)
+    .map(([pos, weight]) => ({ id: roster[pos]?.id, player: roster[pos], pos, weight }))
+    .filter(item => item.player && item.weight > 0);
+}
+
+function pickWeightedObject(items) {
+  const clean = items.filter(item => item && Number(item.weight) > 0);
+  if (!clean.length) return null;
+  const total = clean.reduce((sum, item) => sum + Number(item.weight), 0);
+  let roll = Math.random() * total;
+  for (const item of clean) {
+    roll -= Number(item.weight);
+    if (roll <= 0) return item;
+  }
+  return clean[clean.length - 1];
+}
+
+function pbpAddLine(lines, player, stats) {
+  if (!player) return;
+  if (!lines[player.id]) lines[player.id] = { player: player.name, grade: player.grade, stats: {} };
+  for (const [key, value] of Object.entries(stats)) {
+    const v = Math.round(Number(value) || 0);
+    if (v) lines[player.id].stats[key] = (lines[player.id].stats[key] || 0) + v;
+  }
+}
+
+function pbpAddSeasonStats(player, stats) {
+  if (!player) return;
+  addStats(player, stats);
+}
+
+function pbpClock(q, playIndex) {
+  const playsPerQ = 32;
+  const remaining = clamp(12 * 60 - Math.round((playIndex % playsPerQ) * (12 * 60 / playsPerQ)), 0, 12 * 60);
+  return `${String(Math.floor(remaining / 60)).padStart(2, "0")}:${String(remaining % 60).padStart(2, "0")}`;
+}
+
+function pbpYardLabel(yard, offenseSide) {
+  const y = offenseSide === "home" ? yard : 100 - yard;
+  if (y === 50) return "midfield";
+  if (y < 50) return `own ${y}`;
+  return `opp ${100 - y}`;
+}
+
+function pbpUpdateTopLevelStats(scheduledGame) {
+  for (const side of ["home", "away"]) {
+    const s = scheduledGame.stats[side];
+    s.passYards = Math.round(s.passYards || 0);
+    s.rushYards = Math.round(s.rushYards || 0);
+    s.totalYards = s.passYards + s.rushYards;
+    s.turnovers = Math.round(s.turnovers || 0);
+    s.passTD = Math.round(s.passTD || 0);
+    s.rushTD = Math.round(s.rushTD || 0);
+  }
+}
+
+function pbpFinalizeStroudStats(scheduledGame, playerLines) {
+  scheduledGame.playerStats = Object.values(playerLines)
+    .filter(line => Object.keys(line.stats || {}).length)
+    .sort((a, b) => {
+      const av = (a.stats.passYards || 0) + (a.stats.rushYards || 0) + (a.stats.recYards || 0) + (a.stats.tackles || 0) * 4;
+      const bv = (b.stats.passYards || 0) + (b.stats.rushYards || 0) + (b.stats.recYards || 0) + (b.stats.tackles || 0) * 4;
+      return bv - av;
+    })
+    .slice(0, 20);
+
+  const stroudSide = scheduledGame.homeId === "team_stroud" ? "home" : "away";
+  const playerPass = scheduledGame.playerStats.reduce((sum, line) => sum + (line.stats.passYards || 0), 0);
+  const playerRush = scheduledGame.playerStats.reduce((sum, line) => sum + (line.stats.rushYards || 0), 0);
+  scheduledGame.stats[stroudSide].passYards = playerPass;
+  scheduledGame.stats[stroudSide].rushYards = playerRush;
+  scheduledGame.stats[stroudSide].totalYards = playerPass + playerRush;
+}
+
+function pbpPlayDescription(play) {
+  if (play.kind === "run") return `${play.playerName} runs for ${play.yards} yards.`;
+  if (play.kind === "pass") return `${play.qbName} hits ${play.playerName} for ${play.yards} yards.`;
+  if (play.kind === "incomplete") return `${play.qbName} throws incomplete.`;
+  if (play.kind === "sack") return `${play.qbName} is sacked for ${Math.abs(play.yards)}.`;
+  if (play.kind === "interception") return `${play.qbName} is intercepted.`;
+  if (play.kind === "fumble") return `${play.playerName} loses the football.`;
+  return play.text || "Play.";
+}
+
+function pbpMakeWatchEvent(scheduledGame, state, title, text, big = false) {
+  return {
+    homeId: scheduledGame.homeId,
+    awayId: scheduledGame.awayId,
+    homeScore: state.homeScore,
+    awayScore: state.awayScore,
+    quarter: `Q${state.quarter}`,
+    clock: pbpClock(state.quarter, state.playIndex),
+    downText: `${state.down} & ${state.distance} • ${pbpYardLabel(state.yard, state.offenseSide)}`,
+    fieldPct: clamp(state.yard, 2, 98),
+    title,
+    text,
+    big
+  };
+}
+
 function simulateGame(scheduledGame) {
+  syncStroudTeamSchemes();
+
   const home = getTeam(scheduledGame.homeId);
   const away = getTeam(scheduledGame.awayId);
+  if (!home || !away) return;
 
-  const activeDepth = JSON.parse(JSON.stringify(game.depth));
-  const participation = [];
+  const activeDepth = JSON.parse(JSON.stringify(game.depth || emptyDepthChart()));
+  const homeScheme = activeSchemeForTeam(home);
+  const awayScheme = activeSchemeForTeam(away);
+  const homeRoster = pbpOffenseRoster(home, activeDepth);
+  const awayRoster = pbpOffenseRoster(away, activeDepth);
+
+  const playerLines = {};
+  const watchEvents = [];
   scheduledGame.log = [];
-
-  for (let quarter = 1; quarter <= 4; quarter++) {
-    processQuarterInjuries(scheduledGame, quarter, activeDepth);
-    participation.push(JSON.parse(JSON.stringify(activeDepth)));
-  }
-
-  const [homeScore, awayScore] = simulateScore(home, away);
-  scheduledGame.homeScore = homeScore;
-  scheduledGame.awayScore = awayScore;
-  scheduledGame.played = true;
-
+  scheduledGame.injuries = scheduledGame.injuries || [];
   scheduledGame.stats = {
-    home: simulateBoxScore(home, away, homeScore),
-    away: simulateBoxScore(away, home, awayScore)
+    home: { scheme: homeScheme, passYards: 0, rushYards: 0, totalYards: 0, turnovers: 0, passTD: 0, rushTD: 0 },
+    away: { scheme: awayScheme, passYards: 0, rushYards: 0, totalYards: 0, turnovers: 0, passTD: 0, rushTD: 0 }
   };
 
-  applyTeamResult(home, away, homeScore, awayScore, scheduledGame.district);
+  const state = {
+    homeScore: 0,
+    awayScore: 0,
+    quarter: 1,
+    playIndex: 0,
+    offenseSide: "home",
+    defenseSide: "away",
+    down: 1,
+    distance: 10,
+    yard: 25
+  };
 
+  function teamForSide(side) {
+    return side === "home" ? home : away;
+  }
+
+  function rosterForSide(side) {
+    return side === "home" ? homeRoster : awayRoster;
+  }
+
+  function score(side, points, type) {
+    if (side === "home") state.homeScore += points;
+    else state.awayScore += points;
+
+    if (type === "passTD") scheduledGame.stats[side].passTD += 1;
+    if (type === "rushTD") scheduledGame.stats[side].rushTD += 1;
+  }
+
+  function addWatch(title, text, big = false) {
+    watchEvents.push(pbpMakeWatchEvent(scheduledGame, state, title, text, big));
+  }
+
+  addWatch("Kickoff", `${home.name} and ${away.name} are underway under the lights.`);
+
+  let possessionSide = "home";
+  let driveCount = 0;
+  const maxDrives = 26;
+
+  while (driveCount < maxDrives) {
+    driveCount += 1;
+    state.offenseSide = possessionSide;
+    state.defenseSide = possessionSide === "home" ? "away" : "home";
+    state.down = 1;
+    state.distance = 10;
+    state.yard = possessionSide === "home" ? rand(22, 35) : rand(65, 78);
+
+    const offense = teamForSide(state.offenseSide);
+    const defense = teamForSide(state.defenseSide);
+    const offenseRoster = rosterForSide(state.offenseSide);
+    const scheme = activeSchemeForTeam(offense);
+    const runRate = schemeRunRate(scheme);
+    const runTalent = pbpRunTalent(offense, scheme, offenseRoster);
+    const passTalent = pbpPassTalent(offense, scheme, offenseRoster);
+    const defTalent = pbpDefTalent(defense, activeDepth);
+    const advantage = ((runTalent + passTalent) / 2) - defTalent + (state.offenseSide === "home" ? 1.5 : 0);
+
+    for (let playInDrive = 0; playInDrive < 12; playInDrive++) {
+      state.playIndex += 1;
+      state.quarter = clamp(Math.floor((state.playIndex - 1) / 32) + 1, 1, 4);
+
+      if (state.quarter > 4) break;
+
+      if (state.playIndex % 32 === 1 && state.playIndex > 1) {
+        processQuarterInjuries(scheduledGame, state.quarter, activeDepth);
+      }
+
+      const sideStats = scheduledGame.stats[state.offenseSide];
+      const isRun = Math.random() < runRate;
+      const turnoverRoll = Math.random();
+      let yards = 0;
+      let title = "Play";
+      let text = "";
+      let big = false;
+      let firstDownOrScore = false;
+
+      if (isRun) {
+        const runners = pbpRunnerWeights(scheme, offenseRoster);
+        const runnerObj = offense.id === "team_stroud"
+          ? pickWeightedObject(runners)
+          : null;
+        const runner = runnerObj?.player || null;
+        const runnerName = runner?.name || choice(["the tailback", "the quarterback", "the fullback"]);
+
+        const talent = offense.id === "team_stroud"
+          ? p2Avg([statOf(runner, "speed"), statOf(runner, "agility"), statOf(runner, "carry"), statOf(runner, "vision"), pbpLineGrade(offenseRoster)], runTalent)
+          : runTalent;
+
+        const ypcBase = 3.7 + (talent - defTalent) * 0.055 + advantage * 0.018;
+        yards = Math.round(clamp(bell(ypcBase, 4.8, -5, 38), -7, 65));
+
+        if (Math.random() < 0.018 + Math.max(0, defTalent - talent) / 900) {
+          sideStats.turnovers += 1;
+          if (runner) {
+            pbpAddSeasonStats(runner, { games: 1 });
+            pbpAddLine(playerLines, runner, {});
+          }
+          addWatch("Fumble!", `${offense.name} coughs it up after a run.`, true);
+          break;
+        }
+
+        sideStats.rushYards += yards;
+        if (runner) {
+          pbpAddSeasonStats(runner, { games: 1, rushYards: yards });
+          pbpAddLine(playerLines, runner, { rushYards: yards });
+        }
+
+        title = yards >= 20 ? "Big Run" : yards >= state.distance ? "First Down Run" : "Run";
+        text = `${runnerName} runs for ${yards} yards.`;
+        big = yards >= 20;
+      } else {
+        const qb = offenseRoster?.QB || null;
+        const qbName = qb?.name || "the quarterback";
+        const receivers = pbpReceiverWeights(scheme, offenseRoster);
+        const receiverObj = offense.id === "team_stroud" ? pickWeightedObject(receivers) : null;
+        const receiver = receiverObj?.player || null;
+        const receiverName = receiver?.name || choice(["a receiver", "the tight end", "the back"]);
+
+        const qbTalent = offense.id === "team_stroud"
+          ? p2Avg([statOf(qb, "armStrength"), statOf(qb, "throwAccuracy"), statOf(qb, "vision")], passTalent)
+          : passTalent;
+        const recTalent = receiver ? p2Avg([statOf(receiver, "catching"), statOf(receiver, "speed"), statOf(receiver, "agility")], 50) : passTalent;
+        const throwTalent = p2Avg([qbTalent, recTalent, pbpLineGrade(offenseRoster)], passTalent);
+        const completeChance = clamp(0.52 + (throwTalent - defTalent) / 210, 0.32, 0.74);
+
+        if (turnoverRoll < 0.025 + Math.max(0, defTalent - throwTalent) / 700) {
+          sideStats.turnovers += 1;
+          if (qb) pbpAddSeasonStats(qb, { games: 1, intThrown: 1 });
+          addWatch("Interception!", `${qbName} is picked off.`, true);
+          break;
+        }
+
+        if (Math.random() > completeChance) {
+          title = "Incomplete";
+          text = `${qbName} throws incomplete.`;
+          yards = 0;
+        } else {
+          yards = Math.round(clamp(bell(8.2 + (throwTalent - defTalent) * 0.07, 7.5, -2, 48), -4, 70));
+          sideStats.passYards += Math.max(0, yards);
+
+          if (qb) {
+            pbpAddSeasonStats(qb, { games: 1, passYards: Math.max(0, yards) });
+            pbpAddLine(playerLines, qb, { passYards: Math.max(0, yards) });
+          }
+          if (receiver && yards > 0) {
+            pbpAddSeasonStats(receiver, { games: 1, catches: 1, recYards: yards });
+            pbpAddLine(playerLines, receiver, { catches: 1, recYards: yards });
+          }
+
+          title = yards >= 20 ? "Big Pass" : yards >= state.distance ? "First Down Pass" : "Completion";
+          text = `${qbName} hits ${receiverName} for ${yards} yards.`;
+          big = yards >= 20;
+        }
+      }
+
+      const newYard = state.offenseSide === "home" ? state.yard + yards : state.yard - yards;
+      const scoredTD = state.offenseSide === "home" ? newYard >= 100 : newYard <= 0;
+
+      if (scoredTD) {
+        const tdType = isRun ? "rushTD" : "passTD";
+        score(state.offenseSide, 7, tdType);
+        if (isRun) {
+          const runner = offense.id === "team_stroud" ? pickWeightedObject(pbpRunnerWeights(scheme, offenseRoster))?.player : null;
+          // Do not double-count yards here; only add TD if player line exists from play.
+          if (runner) {
+            pbpAddSeasonStats(runner, { rushTD: 1 });
+            pbpAddLine(playerLines, runner, { rushTD: 1 });
+          }
+        } else {
+          const qb = offenseRoster?.QB || null;
+          if (qb) {
+            pbpAddSeasonStats(qb, { passTD: 1 });
+            pbpAddLine(playerLines, qb, { passTD: 1 });
+          }
+        }
+        addWatch("Touchdown!", `${offense.name} finds the end zone.`, true);
+        firstDownOrScore = true;
+        break;
+      }
+
+      state.yard = clamp(newYard, 1, 99);
+      state.distance -= yards;
+
+      if (state.distance <= 0) {
+        state.down = 1;
+        state.distance = 10;
+        firstDownOrScore = true;
+      } else {
+        state.down += 1;
+      }
+
+      addWatch(title, text, big);
+
+      if (state.down > 4) {
+        if (state.offenseSide === "home" ? state.yard >= 72 : state.yard <= 28) {
+          const fgGood = Math.random() < clamp(0.58 + advantage / 120, 0.30, 0.78);
+          if (fgGood) {
+            score(state.offenseSide, 3, "fg");
+            addWatch("Field Goal", `${offense.name} adds three.`, true);
+          } else {
+            addWatch("Missed Field Goal", `${offense.name} comes up empty.`, false);
+          }
+        } else {
+          addWatch("Punt", `${offense.name} punts it away.`, false);
+        }
+        break;
+      }
+    }
+
+    possessionSide = possessionSide === "home" ? "away" : "home";
+  }
+
+  // Prevent ties.
+  if (state.homeScore === state.awayScore) {
+    const winner = (home.power + rand(-10, 10)) >= (away.power + rand(-10, 10)) ? "home" : "away";
+    score(winner, 3, "fg");
+    state.offenseSide = winner;
+    state.yard = winner === "home" ? 78 : 22;
+    state.down = 4;
+    state.distance = 4;
+    state.quarter = 4;
+    addWatch("Late Field Goal", `${teamForSide(winner).name} wins it late.`, true);
+  }
+
+  scheduledGame.homeScore = state.homeScore;
+  scheduledGame.awayScore = state.awayScore;
+  scheduledGame.played = true;
+  scheduledGame.watchEvents = watchEvents;
+  scheduledGame.playLog = watchEvents.map(event => ({
+    quarter: event.quarter,
+    clock: event.clock,
+    title: event.title,
+    text: event.text,
+    homeScore: event.homeScore,
+    awayScore: event.awayScore
+  }));
+
+  pbpUpdateTopLevelStats(scheduledGame);
+
+  // Defensive Stroud stats from opponent plays. Not perfect yet, but grounded to play volume.
   if (scheduledGame.homeId === "team_stroud" || scheduledGame.awayId === "team_stroud") {
-    applyStroudStats(scheduledGame, participation);
+    const stroudDefenseSide = scheduledGame.homeId === "team_stroud" ? "home" : "away";
+    const opponentStats = scheduledGame.stats[stroudDefenseSide === "home" ? "away" : "home"];
+    const defensivePlays = clamp(Math.round(((opponentStats.rushYards + opponentStats.passYards) / 7) + 30 + opponentStats.turnovers * 3), 28, 70);
+    const defenders = DEFENSE_POSITIONS.map(pos => getDepthPlayer(activeDepth, "defense", pos)).filter(Boolean);
+    const tackleWeights = defenders.map(player => ({
+      id: player.id,
+      player,
+      weight: p2Avg([statOf(player, "tackling"), statOf(player, "pursuit"), statOf(player, "speed")], 50)
+    }));
+    const tackleShares = boundedShares(defensivePlays, tackleWeights, 13);
+    for (const [id, tackles] of Object.entries(tackleShares)) {
+      const defender = getPlayer(id);
+      if (!defender || tackles <= 0) continue;
+      const sacks = Math.random() < 0.12 && tackles >= 3 ? 1 : 0;
+      const interceptions = Math.random() < 0.08 && tackles >= 2 ? 1 : 0;
+      pbpAddSeasonStats(defender, { games: 1, tackles, sacks, interceptions });
+      pbpAddLine(playerLines, defender, { tackles, sacks, interceptions });
+    }
+
+    pbpFinalizeStroudStats(scheduledGame, playerLines);
     updateRivalryRecord(scheduledGame);
     adjustPrestigeForGame(scheduledGame);
+
+    const starters = new Set([
+      ...Object.values(activeDepth.offense).map(slots => slots[0]),
+      ...Object.values(activeDepth.defense).map(slots => slots[0])
+    ].filter(Boolean));
+    for (const playerId of starters) {
+      const player = getPlayer(playerId);
+      revealTrait(player, "gamer", rand(4, 9));
+      revealTrait(player, "footballIQ", rand(2, 6));
+      if (Math.abs(state.homeScore - state.awayScore) <= 14 || scheduledGame.playoff) revealTrait(player, "clutch", rand(4, 10));
+    }
   }
+
+  applyTeamResult(home, away, state.homeScore, state.awayScore, scheduledGame.district);
 }
 
 function simulateScore(home, away) {
@@ -2630,6 +3139,22 @@ function weeklyPractice() {
 }
 
 /* ----------------------------- Newspaper etc ----------------------------- */
+
+
+function weeklyTopPerformers(stroudGame) {
+  const lines = stroudGame?.playerStats || [];
+  const best = (key, label) => {
+    const line = [...lines].sort((a, b) => Number(b.stats?.[key] || 0) - Number(a.stats?.[key] || 0))[0];
+    if (!line || !Number(line.stats?.[key] || 0)) return { label, name: "No Tiger", value: 0 };
+    return { label, name: line.player, value: Number(line.stats[key] || 0) };
+  };
+  return [
+    best("passYards", "Passing"),
+    best("rushYards", "Rushing"),
+    best("recYards", "Receiving"),
+    best("tackles", "Tackles")
+  ];
+}
 
 function makeWeeklyPaper(week, games) {
   const stroudGame = findStroudGame(games) || game.schedule?.find(item => item.week === week && item.played && (item.homeId === "team_stroud" || item.awayId === "team_stroud")) || game.playoffBracket?.find(item => item.played && (item.homeId === "team_stroud" || item.awayId === "team_stroud"));
