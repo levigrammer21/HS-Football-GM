@@ -1,6 +1,6 @@
 
 "use strict";
-const BUILD_VERSION = "v0.0.40-alpha";
+const BUILD_VERSION = "v0.0.41-alpha";
 const BUILD_DATE = "2026-06-12";
 
 function reportFatalError(error) {
@@ -1375,18 +1375,60 @@ function opponentPlayName(opponent) {
 }
 
 
+
+function stroudHasUnplayedPlayoffGame() {
+  return (game.playoffBracket || []).some(g => !g.played && (g.homeId === "team_stroud" || g.awayId === "team_stroud"));
+}
+
+function stroudLostLatestPlayoffGame() {
+  const games = (game.playoffBracket || [])
+    .filter(g => g.played && (g.homeId === "team_stroud" || g.awayId === "team_stroud"));
+  const last = games[games.length - 1];
+  if (!last) return false;
+  return last.homeId === "team_stroud" ? last.homeScore < last.awayScore : last.awayScore < last.homeScore;
+}
+
+function completeRemainingPlayoffsWithoutStroud() {
+  let safety = 0;
+  while ((game.playoffBracket || []).some(g => !g.played) && safety < 80) {
+    safety += 1;
+    const next = game.playoffBracket.find(g => !g.played);
+    if (!next) break;
+
+    // If Stroud somehow appears again, stop. User should play it.
+    if (next.homeId === "team_stroud" || next.awayId === "team_stroud") break;
+
+    simulateGame(next);
+  }
+
+  const finals = (game.playoffBracket || []).filter(g => g.played);
+  const last = finals[finals.length - 1];
+  if (last) {
+    const champId = last.homeScore >= last.awayScore ? last.homeId : last.awayId;
+    const champ = getTeam(champId);
+    game.stateChampion = {
+      year: game.year,
+      teamId: champId,
+      teamName: champ ? `${champ.name} ${champ.mascot || ""}`.trim() : "Unknown",
+      score: `${getTeam(last.homeId)?.name || "Home"} ${last.homeScore}, ${getTeam(last.awayId)?.name || "Away"} ${last.awayScore}`
+    };
+  }
+
+  if (typeof generateSeasonAwards === "function") game.seasonAwards = generateSeasonAwards();
+}
+
 function checkOffseasonAfterAdvance() {
   if (game.phase !== "playoffs") return;
 
-  const stroudAlive = (game.playoffBracket || []).some(g =>
-    !g.played && (g.homeId === "team_stroud" || g.awayId === "team_stroud")
-  );
   const anyUnplayed = (game.playoffBracket || []).some(g => !g.played);
+  const stroudAlive = stroudHasUnplayedPlayoffGame();
 
-  if (!stroudAlive || !anyUnplayed) {
-    enterOffseason(stroudAlive ? "Stroud finished the state tournament." : "Stroud's playoff run ended. The state tournament has been completed.");
+  if (!stroudAlive || (!anyUnplayed && !stroudAlive)) {
+    completeRemainingPlayoffsWithoutStroud();
+    enterOffseason("Stroud's playoff run ended. The rest of the state tournament has been completed.");
   }
 }
+
 
 function advanceWeek() {
   if (advanceWeekLocked) return;
@@ -3762,6 +3804,7 @@ function showApp() {
 }
 
 function render() {
+  if (game) recalcAllTeamRecordsFromGames();
   if (!game) {
     showLogin();
     return;
@@ -3848,6 +3891,71 @@ function ratingLine(label, value) {
   `;
 }
 
+
+function currentStroudRecord() {
+  const all = [...(game.schedule || []), ...(game.playoffBracket || [])]
+    .filter(g => g.played && (g.homeId === "team_stroud" || g.awayId === "team_stroud"));
+
+  let wins = 0;
+  let losses = 0;
+  let districtWins = 0;
+  let districtLosses = 0;
+
+  for (const g of all) {
+    const stroudHome = g.homeId === "team_stroud";
+    const won = stroudHome ? g.homeScore > g.awayScore : g.awayScore > g.homeScore;
+    if (won) wins += 1;
+    else losses += 1;
+
+    if (g.district) {
+      if (won) districtWins += 1;
+      else districtLosses += 1;
+    }
+  }
+
+  return { wins, losses, districtWins, districtLosses };
+}
+
+function nextStroudGame() {
+  if (game.phase === "playoffs") {
+    return (game.playoffBracket || []).find(g => !g.played && (g.homeId === "team_stroud" || g.awayId === "team_stroud")) || null;
+  }
+  if (game.phase === "regular") {
+    return (game.schedule || [])
+      .filter(g => !g.played && (g.homeId === "team_stroud" || g.awayId === "team_stroud"))
+      .sort((a, b) => (a.week || 0) - (b.week || 0))[0] || null;
+  }
+  return null;
+}
+
+function nextStroudGameLabel() {
+  const g = nextStroudGame();
+  if (!g) {
+    if (game.phase === "offseason") return { name: "Offseason", week: "Season complete", tag: "Start New Season" };
+    if (game.phase === "complete") return { name: "Season complete", week: "", tag: "Awards posted" };
+    return { name: "No game scheduled", week: "", tag: "" };
+  }
+  const opponentId = g.homeId === "team_stroud" ? g.awayId : g.homeId;
+  const opponent = getTeam(opponentId);
+  return {
+    name: opponent ? `${opponent.name} ${opponent.mascot || ""}`.trim() : "Opponent",
+    week: g.playoff ? `Playoff Round ${g.round || ""}`.trim() : `Week ${g.week}`,
+    tag: g.rivalry || (g.district ? "District game" : "")
+  };
+}
+
+function homeSeasonSummary() {
+  const record = currentStroudRecord();
+  const next = nextStroudGameLabel();
+  const rank = (game.rankings || []).findIndex(id => id === "team_stroud") + 1;
+  return {
+    record: `${record.wins}-${record.losses}`,
+    district: `${record.districtWins}-${record.districtLosses}`,
+    rank: rank > 0 ? `#${rank}` : "Unranked",
+    next
+  };
+}
+
 function renderDashboard() {
   const stroud = getTeam("team_stroud");
   const nextGame = nextStroudGame();
@@ -3876,7 +3984,7 @@ function renderDashboard() {
             <h3>Next Game</h3>
             ${nextOpponent ? `
               <strong>${escapeHtml(nextOpponent.name)} ${escapeHtml(nextOpponent.mascot)}</strong>
-              <p class="muted">${escapeHtml(nextGame.label || `Week ${nextGame.week}`)} ${nextGame.district ? "• District" : ""}</p>
+              <p class="muted">${escapeHtml(nextGame.label || `Week ${homeInfo.next.week}`)} ${nextGame.district ? "• District" : ""}</p>
               ${RIVALS.includes(nextOpponent.name) ? `<span class="pill gold">${escapeHtml(game.rivalries?.[nextOpponent.name]?.trophy || "Rivalry Game")}</span>` : ""}
             ` : "<p class='muted'>No game scheduled.</p>"}
           </div>
@@ -5430,3 +5538,43 @@ window.advanceToNextSeason = advanceToNextSeason;
 function advancePlayoffBracketAfterGame(scheduledGame) {
   if (typeof buildNextPlayoffRound === "function") buildNextPlayoffRound();
 }
+function recalcAllTeamRecordsFromGames() {
+  for (const team of TEAMS) {
+    team.wins = 0;
+    team.losses = 0;
+    team.districtWins = 0;
+    team.districtLosses = 0;
+    team.pf = 0;
+    team.pa = 0;
+  }
+
+  for (const g of [...(game.schedule || []), ...(game.playoffBracket || [])]) {
+    if (!g.played) continue;
+    const home = getTeam(g.homeId);
+    const away = getTeam(g.awayId);
+    if (!home || !away) continue;
+
+    home.pf += g.homeScore || 0;
+    home.pa += g.awayScore || 0;
+    away.pf += g.awayScore || 0;
+    away.pa += g.homeScore || 0;
+
+    if ((g.homeScore || 0) > (g.awayScore || 0)) {
+      home.wins += 1;
+      away.losses += 1;
+      if (g.district) {
+        home.districtWins += 1;
+        away.districtLosses += 1;
+      }
+    } else {
+      away.wins += 1;
+      home.losses += 1;
+      if (g.district) {
+        away.districtWins += 1;
+        home.districtLosses += 1;
+      }
+    }
+  }
+}
+
+
