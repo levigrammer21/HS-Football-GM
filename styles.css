@@ -1383,3 +1383,101 @@ tr:hover td {
   align-items: center;
   margin-top: 12px;
 }
+
+.page-action-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.portrait-wrap {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.player-portrait {
+  width: 116px;
+  height: 116px;
+  flex: 0 0 auto;
+  border-radius: 18px;
+  border: 1px solid rgba(255,255,255,.16);
+  background: linear-gradient(180deg, rgba(46,123,255,.16), rgba(255,255,255,.04));
+  overflow: hidden;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.10), 0 10px 30px rgba(0,0,0,.25);
+}
+.player-portrait svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.portrait-info {
+  min-width: 180px;
+  flex: 1;
+}
+
+.page-action-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.roster-table th {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.roster-table td,
+.roster-table th {
+  white-space: nowrap;
+}
+
+.roster-table .player-name,
+.roster-table tr[data-player-id] {
+  cursor: pointer;
+}
+
+.roster-table tr[data-player-id]:hover {
+  background: rgba(46,123,255,.10);
+}
+
+.roster-table td:first-child,
+.roster-table th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: #0d1726;
+}
+
+.player-card-intro {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.player-portrait {
+  width: 116px;
+  height: 116px;
+  flex: 0 0 auto;
+  border-radius: 18px;
+  border: 1px solid rgba(255,255,255,.16);
+  background: linear-gradient(180deg, rgba(46,123,255,.16), rgba(255,255,255,.04));
+  overflow: hidden;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.10), 0 10px 30px rgba(0,0,0,.25);
+}
+
+.player-portrait svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.player-card-intro-info {
+  flex: 1;
+  min-width: 180px;
+}

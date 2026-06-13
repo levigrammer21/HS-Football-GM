@@ -1,6 +1,6 @@
 
 "use strict";
-const BUILD_VERSION = "v0.0.24-alpha";
+const BUILD_VERSION = "v0.0.25-alpha";
 const BUILD_DATE = "2026-06-12";
 
 function reportFatalError(error) {
@@ -2757,6 +2757,7 @@ function loadLocal() {
 }
 
 function migrateSave() {
+  if (game?.players) game.players.forEach(player => ensurePlayerPortrait(player));
   game.version = 1;
   game.players ||= [];
   game.records ||= { season: {}, career: {} };
@@ -3221,51 +3222,136 @@ function rankingList(teams) {
 
 function renderRoster() {
   const counts = varsityCounts();
+  const sortKey = window.rosterSortKey || "name";
+  const sortDir = window.rosterSortDir || "asc";
+  const columns = [
+    ["name", "Name"],
+    ["status", "Status"],
+    ["offense", "O"],
+    ["defense", "D"],
+    ["special", "ST"],
+    ["grade", "Yr"],
+    ["height", "Ht"],
+    ["weight", "Wt"],
+    ["speed", "Spd"],
+    ["accel", "Acc"],
+    ["strength", "Str"],
+    ["agility", "Agi"],
+    ["stamina", "Sta"],
+    ["armStrength", "Arm"],
+    ["throwAccuracy", "ThA"],
+    ["catching", "Cat"],
+    ["carry", "Car"],
+    ["blocking", "Blk"],
+    ["tackling", "Tkl"],
+    ["coverage", "Cov"],
+    ["vision", "Vis"],
+    ["pursuit", "Pur"],
+    ["kickPower", "KP"],
+    ["kickAccuracy", "KA"]
+  ];
+
+  const sorted = sortedRosterPlayers(sortKey, sortDir);
+
   document.getElementById("view").innerHTML = `
     <div class="card">
       <div class="split">
-        <h3>Roster</h3>
+        <h3>Roster <span class="muted small">Tap headers to sort. Tap a player row to open profile.</span></h3>
         <div class="row">
           <span class="status-pill starter">Varsity ${counts.varsity}</span>
           <span class="status-pill jv">JV ${counts.jv}</span>
           <span class="pill">${game.players.length} players</span>
         </div>
       </div>
-      <p class="muted small">Roles shown here are actual varsity depth-chart roles. If a player is not in the two-deep, he is JV.</p>
-      <div class="roster-card-list">
-        ${game.players.map(player => `
-          <div class="roster-player-card">
-            <div class="roster-player-top">
-              <div>
-                <div class="roster-player-name" data-player-id="${player.id}">${escapeHtml(player.name)}</div>
-                <div class="muted small">${player.grade} • ${formatHeight(player.height)} • ${player.weight} lbs</div>
-              </div>
-              ${playerStatusPill(player.id)}
-            </div>
-            <div class="roster-role-row">
-              <span class="pill">O: ${escapeHtml(rolePositionOnly(player.id, "offense"))}</span>
-              <span class="pill">D: ${escapeHtml(rolePositionOnly(player.id, "defense"))}</span>
-              <span class="pill">ST: ${escapeHtml(rolePositionOnly(player.id, "special"))}</span>
-            </div>
-            <div class="roster-stat-row">
-              <div class="roster-stat-box"><span>Speed</span>${player.stats.speed}</div>
-              <div class="roster-stat-box"><span>Strength</span>${player.stats.strength}</div>
-              <div class="roster-stat-box"><span>Agility</span>${player.stats.agility}</div>
-              <div class="roster-stat-box"><span>Blocking</span>${player.stats.blocking}</div>
-              <div class="roster-stat-box"><span>Tackling</span>${player.stats.tackling}</div>
-              <div class="roster-stat-box"><span>Coverage</span>${player.stats.coverage}</div>
-              <div class="roster-stat-box"><span>Carry</span>${player.stats.carry}</div>
-              <div class="roster-stat-box"><span>Arm</span>${player.stats.armStrength}</div>
-            </div>
-          </div>
-        `).join("")}
+
+      <p class="muted small">
+        O/D/ST show actual varsity two-deep roles. Everyone else shows JV.
+      </p>
+
+      <div class="table-wrap">
+        <table class="roster-table">
+          <thead>
+            <tr>
+              ${columns.map(([key, label]) => `<th data-roster-sort="${key}">${label}${sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : ""}</th>`).join("")}
+            </tr>
+          </thead>
+          <tbody>
+            ${sorted.map(player => `
+              <tr data-player-id="${player.id}">
+                <td><span class="player-name">${escapeHtml(player.name)}</span></td>
+                <td>${playerStatusPill(player.id)}</td>
+                <td>${escapeHtml(rolePositionOnly(player.id, "offense"))}</td>
+                <td>${escapeHtml(rolePositionOnly(player.id, "defense"))}</td>
+                <td>${escapeHtml(rolePositionOnly(player.id, "special"))}</td>
+                <td>${player.grade}</td>
+                <td>${formatHeight(player.height)}</td>
+                <td>${player.weight}</td>
+                <td>${player.stats.speed}</td>
+                <td>${player.stats.accel}</td>
+                <td>${player.stats.strength}</td>
+                <td>${player.stats.agility}</td>
+                <td>${player.stats.stamina}</td>
+                <td>${player.stats.armStrength}</td>
+                <td>${player.stats.throwAccuracy}</td>
+                <td>${player.stats.catching}</td>
+                <td>${player.stats.carry}</td>
+                <td>${player.stats.blocking}</td>
+                <td>${player.stats.tackling}</td>
+                <td>${player.stats.coverage}</td>
+                <td>${player.stats.vision}</td>
+                <td>${player.stats.pursuit}</td>
+                <td>${player.stats.kickPower}</td>
+                <td>${player.stats.kickAccuracy}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
       </div>
-    </div>`;
-  document.querySelectorAll("[data-player-id]").forEach(node => {
-    node.addEventListener("click", () => openPlayerCard(Number(node.dataset.playerId)));
+    </div>
+  `;
+
+  document.querySelectorAll("tr[data-player-id]").forEach(row => {
+    row.addEventListener("click", event => {
+      if (event.target.closest("[data-roster-sort]")) return;
+      openPlayerCard(Number(row.dataset.playerId));
+    });
+  });
+
+  document.querySelectorAll("[data-roster-sort]").forEach(header => {
+    header.addEventListener("click", () => {
+      const key = header.dataset.rosterSort;
+      if (window.rosterSortKey === key) {
+        window.rosterSortDir = window.rosterSortDir === "asc" ? "desc" : "asc";
+      } else {
+        window.rosterSortKey = key;
+        window.rosterSortDir = ["name", "status", "offense", "defense", "special", "grade"].includes(key) ? "asc" : "desc";
+      }
+      renderRoster();
+    });
   });
 }
 
+function sortedRosterPlayers(sortKey, sortDir) {
+  const dir = sortDir === "asc" ? 1 : -1;
+  return [...game.players].sort((a, b) => {
+    const av = rosterSortValue(a, sortKey);
+    const bv = rosterSortValue(b, sortKey);
+    if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
+    return String(av).localeCompare(String(bv)) * dir;
+  });
+}
+
+function rosterSortValue(player, key) {
+  if (key === "name") return player.name;
+  if (key === "status") return playerSimpleStatus(player.id);
+  if (key === "offense") return rolePositionOnly(player.id, "offense");
+  if (key === "defense") return rolePositionOnly(player.id, "defense");
+  if (key === "special") return rolePositionOnly(player.id, "special");
+  if (key === "grade") return ["FR", "SO", "JR", "SR"].indexOf(player.grade);
+  if (key === "height") return player.height;
+  if (key === "weight") return player.weight;
+  return player.stats[key] ?? 0;
+}
 
 function fillRemainingDepthChart() {
   const guessed = staffGuessDepthChart();
@@ -3809,7 +3895,77 @@ function playerPortraitSvg(player) {
   `;
 }
 
+
+function ensurePlayerPortrait(player) {
+  if (!player.portrait) {
+    const seed = Math.abs(Number(player.id || 1) * 9301 + player.name.split("").reduce((sum, ch) => sum + ch.charCodeAt(0), 0) * 49297) % 233280;
+    const pick = (arr, offset = 0) => arr[(seed + offset) % arr.length];
+    player.portrait = {
+      skin: pick(["#f2c7a4", "#d99b73", "#b87955", "#8f563b", "#6f3f2b"], 1),
+      hair: pick(["#1f1410", "#3b2418", "#5b351f", "#d7b56d", "#111827", "#7a4a2a"], 3),
+      hairStyle: pick(["short", "flat", "curly", "shag", "mohawk", "buzz"], 5),
+      eyes: pick(["#111827", "#263238", "#214761", "#3c2a1e"], 7),
+      mouth: pick(["neutral", "smile", "serious"], 9),
+      facialHair: player.grade === "FR" ? "none" : pick(["none", "none", "stache", "goatee"], 11),
+      face: pick(["round", "square", "long"], 13)
+    };
+  }
+  return player.portrait;
+}
+
+function playerPortraitSvg(player) {
+  const p = ensurePlayerPortrait(player);
+  const faceW = p.face === "square" ? 54 : p.face === "long" ? 48 : 52;
+  const faceH = p.face === "long" ? 62 : 56;
+  const mouthPath = p.mouth === "smile" ? "M48 70 Q58 78 68 70" : p.mouth === "serious" ? "M48 72 L68 72" : "M50 72 Q58 74 66 72";
+  const hair = {
+    buzz: `<rect x="35" y="22" width="46" height="18" rx="8" fill="${p.hair}"/>`,
+    short: `<path d="M34 44 Q38 20 58 20 Q80 21 83 45 Q70 32 58 34 Q45 32 34 44Z" fill="${p.hair}"/>`,
+    flat: `<path d="M34 39 Q38 18 80 25 L84 42 Q62 32 34 39Z" fill="${p.hair}"/>`,
+    curly: `<path d="M33 42 C30 24 43 18 50 24 C56 14 68 19 70 26 C82 22 88 35 82 47 C68 33 49 32 33 42Z" fill="${p.hair}"/>`,
+    shag: `<path d="M31 42 Q40 18 60 21 Q82 23 86 45 Q78 39 74 56 Q68 40 59 38 Q45 39 38 56 Q36 45 31 42Z" fill="${p.hair}"/>`,
+    mohawk: `<path d="M54 14 L64 14 L70 42 L48 42Z" fill="${p.hair}"/><path d="M36 43 Q45 31 58 31 Q74 31 82 44 L82 51 Q61 41 36 51Z" fill="${p.hair}"/>`
+  }[p.hairStyle];
+
+  const facial = p.facialHair === "stache"
+    ? `<path d="M48 66 Q56 62 64 66 Q56 70 48 66Z" fill="${p.hair}"/>`
+    : p.facialHair === "goatee"
+      ? `<path d="M52 75 Q58 85 64 75 Q59 80 52 75Z" fill="${p.hair}"/>`
+      : "";
+
+  return `
+    <svg viewBox="0 0 116 116" xmlns="http://www.w3.org/2000/svg">
+      <rect width="116" height="116" fill="#081426"/>
+      <path d="M24 110 Q58 82 92 110Z" fill="#173fb8"/>
+      <path d="M31 110 Q58 90 85 110Z" fill="#f7f7f7" opacity=".95"/>
+      <rect x="${58 - faceW/2}" y="32" width="${faceW}" height="${faceH}" rx="${p.face === "square" ? 13 : 24}" fill="${p.skin}"/>
+      ${hair}
+      <circle cx="47" cy="57" r="4" fill="${p.eyes}"/>
+      <circle cx="69" cy="57" r="4" fill="${p.eyes}"/>
+      <path d="M42 50 Q48 47 53 50" stroke="#111827" stroke-width="3" fill="none" stroke-linecap="round"/>
+      <path d="M64 50 Q70 47 75 50" stroke="#111827" stroke-width="3" fill="none" stroke-linecap="round"/>
+      <path d="M58 59 L54 66 L61 66" stroke="#8b5a40" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="${mouthPath}" stroke="#3d261b" stroke-width="3" fill="none" stroke-linecap="round"/>
+      ${facial}
+    </svg>
+  `;
+}
+
+function playerCardIntro(player) {
+  return `
+    <div class="card player-card-intro">
+      <div class="player-portrait">${playerPortraitSvg(player)}</div>
+      <div class="player-card-intro-info">
+        <h3 style="margin:0">${escapeHtml(player.name)}</h3>
+        <p class="muted">${player.grade} • ${formatHeight(player.height)} • ${player.weight} lbs</p>
+        <p>${playerStatusPill(player.id)} <span class="muted">${escapeHtml(playerVarsityStatus(player.id))}</span></p>
+      </div>
+    </div>
+  `;
+}
+
 function openPlayerCard(playerId) {
+  try {
   const player = getPlayer(playerId);
   if (!player) return;
 
@@ -3833,6 +3989,7 @@ function openPlayerCard(playerId) {
     player.name,
     `${player.grade} • ${formatHeight(player.height)} • ${player.weight} lbs • ${playerVarsityStatus(player.id)}`,
     `
+      ${playerCardIntro(player)}
       ${playerPositionEditor(player)}
       <div class="grid two">
         <div class="card">
@@ -3890,6 +4047,10 @@ function openPlayerCard(playerId) {
 
   showModal();
   bindPlayerPositionEditor(player);
+  } catch (error) {
+    console.error(error);
+    toast(`Player card failed: ${error.message}`);
+  }
 }
 
 function showIntroNewspaper() {
@@ -4388,10 +4549,12 @@ if (importFileInput) {
 
 
 
+
 document.addEventListener("click", event => {
   const watchButton = event.target.closest?.("#watchGameBtn");
   if (watchButton) {
     event.preventDefault();
+    event.stopPropagation();
     watchGame();
   }
 });
