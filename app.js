@@ -1,6 +1,6 @@
 
 "use strict";
-const BUILD_VERSION = "v0.0.41-alpha";
+const BUILD_VERSION = "v0.0.42-alpha";
 const BUILD_DATE = "2026-06-12";
 
 function reportFatalError(error) {
@@ -959,7 +959,7 @@ function startFirstSeason() {
   currentView = "newspaper";
   render();
 
-  toast(`Welcome to Stroud, Coach ${game.coachName}.`);
+  toast(`Welcome to Stroud, Coach ${game.coachName || 'Coach'}.`);
 }
 
 function incomingFreshmanPaper() {
@@ -967,7 +967,7 @@ function incomingFreshmanPaper() {
 
   return {
     week: 0,
-    headline: `Coach ${game.coachName} Takes Over Tigers`,
+    headline: `Coach ${game.coachName || 'Coach'} Takes Over Tigers`,
     body: "After a 2-8 season, Stroud has turned the page. The new coach inherits a roster with questions everywhere and a freshman class that could shape the next four years.",
     topPerformers: freshmen.map(player => ({
       name: player.name,
@@ -1425,7 +1425,7 @@ function checkOffseasonAfterAdvance() {
 
   if (!stroudAlive || (!anyUnplayed && !stroudAlive)) {
     completeRemainingPlayoffsWithoutStroud();
-    enterOffseason("Stroud's playoff run ended. The rest of the state tournament has been completed.");
+    try { enterOffseason("Stroud's playoff run ended. The rest of the state tournament has been completed."); } catch (error) { console.error(error); game.phase = 'offseason'; saveLocalSilent(); render(); }
   }
 }
 
@@ -3381,7 +3381,7 @@ function generateAwards(stroudChampion) {
   for (const player of allState) player.awards.push(`${game.year} All-State`);
 
   if (stroudChampion) {
-    awards.push(["Coach of the Year", `Coach ${game.coachName}`]);
+    awards.push(["Coach of the Year", `Coach ${game.coachName || 'Coach'}`]);
   }
 
   game.awards.unshift({
@@ -3795,16 +3795,16 @@ function showLogin() {
 function showApp() {
   document.getElementById("loginScreen").classList.add("hidden");
   document.getElementById("gameApp").classList.remove("hidden");
-  document.getElementById("coachLabel").textContent = game?.coachName ? `Coach ${game.coachName}` : "Coach";
+  document.getElementById("coachLabel").textContent = game?.coachName ? `Coach ${game.coachName || 'Coach'}` : "Coach";
   document.getElementById("authLabel").textContent = currentUser
     ? `${currentUser.isAnonymous ? "Guest" : "Google"} save available`
     : "Local only";
   document.getElementById("prestigeLabel").textContent = game ? `Prestige: ${game.prestige ?? 25}` : "Prestige: --";
-  document.getElementById("topSubTitle").textContent = game?.coachName ? `Stroud Tigers • Coach ${game.coachName} • ${BUILD_VERSION}` : `Stroud Tigers • ${BUILD_VERSION}`;
+  document.getElementById("topSubTitle").textContent = game?.coachName ? `Stroud Tigers • Coach ${game.coachName || 'Coach'} • ${BUILD_VERSION}` : `Stroud Tigers • ${BUILD_VERSION}`;
 }
 
 function render() {
-  if (game) recalcAllTeamRecordsFromGames();
+  if (game) { try { recalcAllTeamRecordsFromGames(); } catch (error) { console.warn('record recalc skipped', error); } }
   if (!game) {
     showLogin();
     return;
@@ -3947,7 +3947,7 @@ function nextStroudGameLabel() {
 function homeSeasonSummary() {
   const record = currentStroudRecord();
   const next = nextStroudGameLabel();
-  const rank = (game.rankings || []).findIndex(id => id === "team_stroud") + 1;
+  const rank = Array.isArray(game.rankings) ? game.rankings.findIndex(id => id === "team_stroud") + 1 : 0;
   return {
     record: `${record.wins}-${record.losses}`,
     district: `${record.districtWins}-${record.districtLosses}`,
@@ -5538,8 +5538,28 @@ window.advanceToNextSeason = advanceToNextSeason;
 function advancePlayoffBracketAfterGame(scheduledGame) {
   if (typeof buildNextPlayoffRound === "function") buildNextPlayoffRound();
 }
+
+function allTeamsSafe() {
+  if (typeof teams !== "undefined" && Array.isArray(teams)) return teams;
+  if (typeof TEAMS !== "undefined" && Array.isArray(TEAMS)) return TEAMS;
+  if (game?.teams && Array.isArray(game.teams)) return game.teams;
+  if (game?.teamsById && typeof game.teamsById === "object") return Object.values(game.teamsById);
+  if (typeof getTeam === "function" && game) {
+    const ids = new Set();
+    for (const g of [...(game.schedule || []), ...(game.playoffBracket || [])]) {
+      if (g.homeId) ids.add(g.homeId);
+      if (g.awayId) ids.add(g.awayId);
+    }
+    return [...ids].map(id => getTeam(id)).filter(Boolean);
+  }
+  return [];
+}
+
 function recalcAllTeamRecordsFromGames() {
-  for (const team of TEAMS) {
+  const teamList = allTeamsSafe();
+  if (!teamList.length || !game) return;
+
+  for (const team of teamList) {
     team.wins = 0;
     team.losses = 0;
     team.districtWins = 0;
@@ -5550,31 +5570,33 @@ function recalcAllTeamRecordsFromGames() {
 
   for (const g of [...(game.schedule || []), ...(game.playoffBracket || [])]) {
     if (!g.played) continue;
+
     const home = getTeam(g.homeId);
     const away = getTeam(g.awayId);
     if (!home || !away) continue;
 
-    home.pf += g.homeScore || 0;
-    home.pa += g.awayScore || 0;
-    away.pf += g.awayScore || 0;
-    away.pa += g.homeScore || 0;
+    home.pf = (home.pf || 0) + (g.homeScore || 0);
+    home.pa = (home.pa || 0) + (g.awayScore || 0);
+    away.pf = (away.pf || 0) + (g.awayScore || 0);
+    away.pa = (away.pa || 0) + (g.homeScore || 0);
 
     if ((g.homeScore || 0) > (g.awayScore || 0)) {
-      home.wins += 1;
-      away.losses += 1;
+      home.wins = (home.wins || 0) + 1;
+      away.losses = (away.losses || 0) + 1;
       if (g.district) {
-        home.districtWins += 1;
-        away.districtLosses += 1;
+        home.districtWins = (home.districtWins || 0) + 1;
+        away.districtLosses = (away.districtLosses || 0) + 1;
       }
     } else {
-      away.wins += 1;
-      home.losses += 1;
+      away.wins = (away.wins || 0) + 1;
+      home.losses = (home.losses || 0) + 1;
       if (g.district) {
-        away.districtWins += 1;
-        home.districtLosses += 1;
+        away.districtWins = (away.districtWins || 0) + 1;
+        home.districtLosses = (home.districtLosses || 0) + 1;
       }
     }
   }
 }
+
 
 
