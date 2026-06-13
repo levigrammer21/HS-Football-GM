@@ -1,6 +1,6 @@
 
 "use strict";
-const BUILD_VERSION = "v0.0.27-alpha";
+const BUILD_VERSION = "v0.0.28-alpha";
 const BUILD_DATE = "2026-06-12";
 
 function reportFatalError(error) {
@@ -1053,19 +1053,11 @@ function teamByName(name) {
 }
 
 function getPlayer(playerId) {
-  return game.players.find(player => player.id === playerId);
-}
-
-
-function syncStroudTeamSchemes() {
-  const stroud = getTeam("team_stroud");
-  if (!stroud || !game?.settings) return;
-  stroud.offense = game.settings.offense;
-  stroud.defense = game.settings.defense;
+  if (playerId === "" || playerId === null || playerId === undefined) return null;
+  return game.players.find(player => String(player.id) === String(playerId)) || null;
 }
 
 function recalculateTeamRatings() {
-  syncStroudTeamSchemes();
   const stroud = getTeam("team_stroud");
 
   const offenseStarters = startersForSide("offense");
@@ -1324,18 +1316,7 @@ function finishWatchedGame() {
   pendingWatchedAdvance = false;
 
   try {
-    if (game.phase === "regular") {
-      runRegularWeek();
-    } else if (game.phase === "playoffs") {
-      runPlayoffRound();
-    } else {
-      advanceWeek();
-      return;
-    }
-
-    saveLocalSilent();
-    render();
-    showFinalResultThenPaper();
+    advanceWeek();
   } catch (error) {
     console.error(error);
     toast(`Watch game finish failed: ${error.message}`);
@@ -1546,7 +1527,7 @@ function opponentPlayName(opponent) {
   ]);
 }
 
-function advanceWeek(fromWatchedGame = false) {
+function advanceWeek() {
   if (!game) {
     createNewDynastyIntro();
     return;
@@ -1603,7 +1584,6 @@ function runRegularWeek() {
 }
 
 function simulateGame(scheduledGame) {
-  syncStroudTeamSchemes();
   const home = getTeam(scheduledGame.homeId);
   const away = getTeam(scheduledGame.awayId);
 
@@ -1674,8 +1654,7 @@ function simulateScore(home, away) {
 }
 
 function simulateBoxScore(team, opponent, points) {
-  const activeOffense = team.id === "team_stroud" ? game.settings.offense : team.offense;
-  const profile = SCHEME_PROFILES[activeOffense] || SCHEME_PROFILES["Pro Style"];
+  const profile = SCHEME_PROFILES[team.offense] || SCHEME_PROFILES["Pro Style"];
   const passNumber = Number(profile.runPass.match(/(\d+)% pass/)?.[1] || 50);
   const passRate = clamp(passNumber / 100 + rand(-5, 5) / 100, 0.1, 0.82);
   const matchup = schemeMatchupRating(team, opponent);
@@ -1709,7 +1688,7 @@ function simulateBoxScore(team, opponent, points) {
     passTD,
     rushTD,
     turnovers: rand(0, team.offenseRating < 45 ? 4 : 2),
-    scheme: activeOffense,
+    scheme: team.offense,
     runPass: profile.runPass,
     matchup: round1(matchup)
   };
@@ -2796,7 +2775,6 @@ function migrateSave() {
   game.rivalries ||= createRivalries();
   ensureRivalTeams();
   repairScheduleIfNeeded();
-  syncStroudTeamSchemes();
 
   for (const player of game.players) {
     player.offensePosition ||= recommendPositions(player)[0] || "WR";
@@ -3342,7 +3320,7 @@ function renderRoster() {
   document.querySelectorAll("tr[data-player-id]").forEach(row => {
     row.addEventListener("click", event => {
       if (event.target.closest("[data-roster-sort]")) return;
-      openPlayerCard(Number(row.dataset.playerId));
+      openPlayerCard(row.dataset.playerId);
     });
   });
 
@@ -3996,7 +3974,7 @@ function playerCardIntro(player) {
 function openPlayerCard(playerId) {
   try {
   const player = getPlayer(playerId);
-  if (!player) { toast("Player not found."); return; }
+  if (!player) { toast(`Player not found: ${playerId}`); return; }
 
   const traitLine = (label, trait) => {
     const knowledge = player.knowledge[trait];
@@ -4593,8 +4571,8 @@ document.addEventListener("click", event => {
   const playerNode = event.target.closest?.("[data-player-id]");
   if (!playerNode) return;
 
-  const playerId = Number(playerNode.dataset.playerId);
-  if (!Number.isFinite(playerId)) return;
+  const playerId = playerNode.dataset.playerId;
+  if (!playerId) return;
 
   event.preventDefault();
   event.stopPropagation();
