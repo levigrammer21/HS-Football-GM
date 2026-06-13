@@ -1,6 +1,6 @@
 
 "use strict";
-const BUILD_VERSION = "v0.0.28-alpha";
+const BUILD_VERSION = "v0.0.29-alpha";
 const BUILD_DATE = "2026-06-12";
 
 function reportFatalError(error) {
@@ -1653,6 +1653,148 @@ function simulateScore(home, away) {
   return [homeScore, awayScore];
 }
 
+
+function safeNumber(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function playerStatValue(player, key) {
+  return safeNumber(player?.stats?.[key], 50);
+}
+
+function playerFitValue(player, position) {
+  if (!player) return 35;
+  try {
+    return safeNumber(positionFit(player, position), 45);
+  } catch {
+    return 45;
+  }
+}
+
+function depthStarter(side, position) {
+  return getPlayer(game?.depth?.[side]?.[position]?.[0]);
+}
+
+function boundedShares(total, weightedIds, maxEach = 999) {
+  const clean = weightedIds
+    .filter(item => item.id !== undefined && item.id !== null && item.id !== "" && safeNumber(item.weight) > 0)
+    .map(item => ({ id: item.id, weight: safeNumber(item.weight) }));
+
+  const out = {};
+  total = Math.max(0, Math.round(safeNumber(total)));
+
+  if (!clean.length || total <= 0) return out;
+
+  const weightTotal = clean.reduce((sum, item) => sum + item.weight, 0);
+  let assigned = 0;
+
+  clean.forEach((item, index) => {
+    const amount = index === clean.length - 1
+      ? Math.max(0, total - assigned)
+      : Math.min(maxEach, Math.floor(total * item.weight / weightTotal));
+    out[item.id] = amount;
+    assigned += amount;
+  });
+
+  let guard = 0;
+  while (assigned < total && guard < 5000) {
+    guard++;
+    const item = clean[guard % clean.length];
+    if ((out[item.id] || 0) < maxEach) {
+      out[item.id] = (out[item.id] || 0) + 1;
+      assigned++;
+    } else if (clean.every(entry => (out[entry.id] || 0) >= maxEach)) {
+      break;
+    }
+  }
+
+  return out;
+}
+
+function chooseWeighted(entries) {
+  const clean = entries.filter(item => item.id !== undefined && item.id !== null && safeNumber(item.weight) > 0);
+  if (!clean.length) return null;
+  const total = clean.reduce((sum, item) => sum + safeNumber(item.weight), 0);
+  let roll = Math.random() * total;
+  for (const item of clean) {
+    roll -= safeNumber(item.weight);
+    if (roll <= 0) return item.id;
+  }
+  return clean[clean.length - 1].id;
+}
+
+function sumValues(obj) {
+  return Object.values(obj || {}).reduce((sum, value) => sum + Math.round(safeNumber(value)), 0);
+}
+
+function calcStroudOffenseYards(opponentTeam, homeAwayBias = 0) {
+  const scheme = game.settings.offense;
+  const profile = SCHEME_PROFILES[scheme] || SCHEME_PROFILES["Pro Style"];
+  const qb = depthStarter("offense", "QB");
+  const rb = depthStarter("offense", "RB");
+  const fb = depthStarter("offense", "FB");
+  const wr1 = depthStarter("offense", "WR1");
+  const wr2 = depthStarter("offense", "WR2");
+  const wr3 = depthStarter("offense", "WR3");
+  const te = depthStarter("offense", "TE");
+
+  const linePositions = ["LT", "LG", "C", "RG", "RT"];
+  const lineGrade = avg(linePositions.map(pos => playerFitValue(depthStarter("offense", pos), pos)));
+  const qbRun = (playerStatValue(qb, "speed") + playerStatValue(qb, "agility") + playerStatValue(qb, "carry") + playerStatValue(qb, "vision")) / 4;
+  const qbPass = (playerStatValue(qb, "armStrength") + playerStatValue(qb, "throwAccuracy") + playerStatValue(qb, "vision")) / 3;
+  const rbRun = (playerStatValue(rb, "speed") + playerStatValue(rb, "agility") + playerStatValue(rb, "carry") + playerStatValue(rb, "vision")) / 4;
+  const fbRun = (playerStatValue(fb, "strength") + playerStatValue(fb, "carry") + playerStatValue(fb, "blocking") + playerStatValue(fb, "vision")) / 4;
+  const passCatch = avg([wr1, wr2, wr3, te].filter(Boolean).map(p => (playerStatValue(p, "catching") + playerStatValue(p, "speed") + playerStatValue(p, "agility")) / 3), 48);
+
+  const opponentDefense = safeNumber(opponentTeam.defenseRating || opponentTeam.power, 50);
+
+  let runTalent;
+  if (["Option", "Flexbone"].includes(scheme)) {
+    runTalent = qbRun * 0.33 + rbRun * 0.25 + fbRun * 0.15 + lineGrade * 0.27;
+  } else if (scheme === "Wing-T") {
+    runTalent = fbRun * 0.28 + rbRun * 0.26 + qbRun * 0.12 + lineGrade * 0.34;
+  } else if (scheme === "Power-I" || scheme === "Wishbone") {
+    runTalent = rbRun * 0.30 + fbRun * 0.24 + qbRun * 0.10 + lineGrade * 0.36;
+  } else {
+    runTalent = rbRun * 0.31 + qbRun * 0.08 + lineGrade * 0.31 + passCatch * 0.10;
+  }
+
+  const passTalent = qbPass * 0.48 + passCatch * 0.32 + lineGrade * 0.20;
+  const runAdv = runTalent - opponentDefense + homeAwayBias;
+  const passAdv = passTalent - opponentDefense + homeAwayBias;
+
+  const runShare = safeNumber(profile.run, 0.55);
+  const totalPlays = clamp(Math.round(49 + runAdv * 0.08 + rand(-5, 6)), 38, 68);
+  const rushAttempts = clamp(Math.round(totalPlays * runShare + rand(-3, 3)), 10, 58);
+  const passAttempts = Math.max(4, totalPlays - rushAttempts);
+
+  const ypc = clamp(3.15 + runAdv * 0.055 + rand(-55, 75) / 100, 1.4, 7.6);
+  const ypa = clamp(5.2 + passAdv * 0.06 + rand(-70, 90) / 100, 2.5, 10.8);
+
+  let rushYards = Math.round(rushAttempts * ypc);
+  let passYards = Math.round(passAttempts * ypa);
+
+  // High school realism guardrails. Great games can happen, but keep normal weeks sane.
+  rushYards = clamp(rushYards, 0, 330);
+  passYards = clamp(passYards, 0, 330);
+
+  const totalYards = rushYards + passYards;
+  const scoreEstimate = clamp(Math.round(totalYards / 15 + (runAdv + passAdv) / 12 + rand(-4, 5)), 0, 56);
+  const turnovers = clamp(Math.round(1.4 - (qbPass + qbRun - 100) / 80 + rand(-1, 2)), 0, 5);
+
+  return {
+    scheme,
+    passYards,
+    rushYards,
+    totalYards,
+    passTD: clamp(Math.round(passYards / 95 + rand(-1, 1)), 0, 5),
+    rushTD: clamp(Math.round(rushYards / 85 + rand(-1, 1)), 0, 6),
+    turnovers,
+    scoreEstimate
+  };
+}
+
 function simulateBoxScore(team, opponent, points) {
   const profile = SCHEME_PROFILES[team.offense] || SCHEME_PROFILES["Pro Style"];
   const passNumber = Number(profile.runPass.match(/(\d+)% pass/)?.[1] || 50);
@@ -2003,7 +2145,11 @@ function applyStroudStats(scheduledGame, participation) {
     { id: wr1?.id, weight: (shares.wr || 0) / 2 },
     { id: wr2?.id, weight: (shares.wr || 0) / 2 }
   ];
-  const rushYardsById = boundedShares(teamStats.rushYards, rushWeights, 260);
+  let rushYardsById = boundedShares(teamStats.rushYards, rushWeights, 260);
+  if (teamStats.rushYards > 0 && sumValues(rushYardsById) === 0) {
+    const fallbackRunner = rb || fb || qb;
+    if (fallbackRunner) rushYardsById[fallbackRunner.id] = Math.round(teamStats.rushYards);
+  }
   const rushTdById = {};
   for (let i = 0; i < teamStats.rushTD; i++) {
     const scorerId = chooseWeighted(rushWeights.filter(item => (rushYardsById[item.id] || 0) >= 1));
