@@ -1,6 +1,6 @@
 
 "use strict";
-const BUILD_VERSION = "v0.0.30-alpha";
+const BUILD_VERSION = "v0.0.33-alpha";
 const BUILD_DATE = "2026-06-12";
 
 function reportFatalError(error) {
@@ -1279,6 +1279,107 @@ function canWatchThisWeek() {
   return game && (game.phase === "regular" || game.phase === "playoffs") && currentWeekHasStroudGame();
 }
 
+
+function lastFinishedStroudGame() {
+  const games = [...(game.schedule || []), ...(game.playoffBracket || [])]
+    .filter(g => g && g.played && (g.homeId === "team_stroud" || g.awayId === "team_stroud"));
+  return games[games.length - 1] || null;
+}
+
+function latestNewspaper() {
+  return (game.newspapers || [])[0] || null;
+}
+
+function buildSafeWatchEvents(finishedGame) {
+  const home = getTeam(finishedGame.homeId) || { name: "Home" };
+  const away = getTeam(finishedGame.awayId) || { name: "Away" };
+  const homeFinal = Number(finishedGame.homeScore || 0);
+  const awayFinal = Number(finishedGame.awayScore || 0);
+  const homeStats = finishedGame.stats?.home || {};
+  const awayStats = finishedGame.stats?.away || {};
+
+  const events = [];
+  let homeScore = 0;
+  let awayScore = 0;
+  let possession = finishedGame.homeId || "team_stroud";
+  let yard = 25;
+
+  function push(q, clock, title, text, big = false) {
+    const possTeam = getTeam(possession) || { name: "Team" };
+    events.push({
+      homeId: finishedGame.homeId,
+      awayId: finishedGame.awayId,
+      homeScore,
+      awayScore,
+      quarter: `Q${q}`,
+      clock,
+      downText: `${possTeam.name} ball • ${yardLabel(yard)}`,
+      fieldPct: clamp(yard, 2, 98),
+      title,
+      text,
+      big
+    });
+  }
+
+  const scores = [];
+  function queueScores(side, points) {
+    let left = points;
+    while (left >= 7) {
+      scores.push({ side, points: 7, label: "Touchdown!" });
+      left -= 7;
+    }
+    if (left >= 3) scores.push({ side, points: 3, label: "Field Goal" });
+    else if (left > 0) scores.push({ side, points: left, label: "Score" });
+  }
+
+  queueScores("home", homeFinal);
+  queueScores("away", awayFinal);
+
+  push(1, "12:00", "Kickoff", `${home.name} and ${away.name} are underway.`);
+
+  let scoreIndex = 0;
+  for (let q = 1; q <= 4; q++) {
+    for (let d = 0; d < 3; d++) {
+      const clock = `${String(rand(1, 11)).padStart(2, "0")}:${String(rand(0, 59)).padStart(2, "0")}`;
+      const shouldScore = scoreIndex < scores.length && (scoreIndex / Math.max(1, scores.length)) <= ((q - 1) * 3 + d + 1) / 12;
+
+      if (shouldScore) {
+        const score = scores[scoreIndex++];
+        possession = score.side === "home" ? finishedGame.homeId : finishedGame.awayId;
+        if (score.side === "home") homeScore += score.points;
+        else awayScore += score.points;
+        yard = score.points >= 7 ? rand(85, 99) : rand(65, 82);
+        push(q, clock, score.label, `${(getTeam(possession) || { name: "Team" }).name} puts points on the board.`, true);
+      } else {
+        const stats = possession === finishedGame.homeId ? homeStats : awayStats;
+        const total = Number(stats.totalYards || 0);
+        const gain = clamp(Math.round(total / 18 + rand(-6, 13)), -3, 35);
+        yard = possession === finishedGame.homeId ? clamp(yard + gain, 1, 99) : clamp(yard - gain, 1, 99);
+        if (gain >= 20) push(q, clock, "Big Gain", `${(getTeam(possession) || { name: "Team" }).name} flips the field.`, true);
+        else if (gain >= 7) push(q, clock, "First Down", `${(getTeam(possession) || { name: "Team" }).name} moves the chains.`);
+        else push(q, clock, "Drive Stalls", `${(getTeam(possession) || { name: "Team" }).name} punts it away.`);
+      }
+
+      possession = possession === finishedGame.homeId ? finishedGame.awayId : finishedGame.homeId;
+    }
+  }
+
+  while (scoreIndex < scores.length) {
+    const score = scores[scoreIndex++];
+    possession = score.side === "home" ? finishedGame.homeId : finishedGame.awayId;
+    if (score.side === "home") homeScore += score.points;
+    else awayScore += score.points;
+    yard = score.points >= 7 ? rand(85, 99) : rand(65, 82);
+    push(4, "0:45", score.label, `${(getTeam(possession) || { name: "Team" }).name} adds late points.`, true);
+  }
+
+  homeScore = homeFinal;
+  awayScore = awayFinal;
+  push(4, "0:00", "Final Whistle", `Final: ${home.name} ${homeFinal}, ${away.name} ${awayFinal}.`, true);
+
+  return events;
+}
+
 function watchGame() {
   if (!canWatchThisWeek()) {
     toast("No Stroud game to watch this week.");
@@ -1291,9 +1392,6 @@ function watchGame() {
     return;
   }
 
-  const beforeWeek = game.week;
-  const beforePhase = game.phase;
-
   try {
     suppressAdvancePopups = true;
     advanceWeek();
@@ -1305,17 +1403,16 @@ function watchGame() {
     suppressAdvancePopups = false;
   }
 
-  const watchedGame = findMostRecentStroudGame(beforePhase, beforeWeek);
-  if (!watchedGame) {
-    toast("Watch Game could not find the finished Stroud game.");
+  const finishedGame = lastFinishedStroudGame();
+  if (!finishedGame) {
+    toast("Watch Game could not find the finished game.");
     render();
     return;
   }
 
-  pendingWatchPaper = game.newspapers?.[0] || null;
-  watchedGameEvents = buildWatchedGameEventsFromResult(watchedGame);
+  pendingWatchPaper = latestNewspaper();
+  watchedGameEvents = buildSafeWatchEvents(finishedGame);
   watchIndex = 0;
-  pendingWatchedAdvance = false;
   openWatchGameOverlay();
   renderWatchFrame();
   watchTimer = setInterval(playNextWatchEvent, 850);
@@ -1386,8 +1483,8 @@ function renderWatchFrame(done = false) {
 
   const event = watchedGameEvents[watchIndex] || watchedGameEvents[0];
   const visible = watchedGameEvents.slice(Math.max(0, watchIndex - 10), watchIndex + 1).reverse();
-  const homeTeam = getTeam(event.homeId);
-  const awayTeam = getTeam(event.awayId);
+  const homeTeam = getTeam(event.homeId) || { name: 'Home' };
+  const awayTeam = getTeam(event.awayId) || { name: 'Away' };
 
   body.innerHTML = `
     <div class="watch-scoreboard">
@@ -1667,6 +1764,20 @@ function opponentPlayName(opponent) {
   ]);
 }
 
+
+function checkOffseasonAfterAdvance() {
+  if (game.phase !== "playoffs") return;
+
+  const stroudAlive = (game.playoffBracket || []).some(g =>
+    !g.played && (g.homeId === "team_stroud" || g.awayId === "team_stroud")
+  );
+  const anyUnplayed = (game.playoffBracket || []).some(g => !g.played);
+
+  if (!stroudAlive || !anyUnplayed) {
+    enterOffseason(stroudAlive ? "Stroud finished the state tournament." : "Stroud's playoff run ended. The state tournament has been completed.");
+  }
+}
+
 function advanceWeek() {
   if (!game) {
     createNewDynastyIntro();
@@ -1701,6 +1812,7 @@ function advanceWeek() {
   saveLocal();
   render();
   if (!suppressAdvancePopups) showFinalResultThenPaper();
+  checkOffseasonAfterAdvance();
 }
 
 function runRegularWeek() {
@@ -2227,6 +2339,62 @@ function rushingSharesForScheme() {
   return { qb: 0.08, rb: 0.56, fb: 0.12, wr: 0.04, other: 0.20 };
 }
 
+
+function offensiveStarterByRole(role) {
+  const aliases = {
+    QB: ["QB"],
+    RB: ["RB", "TB", "HB"],
+    FB: ["FB"],
+    WR1: ["WR1", "WR", "X"],
+    WR2: ["WR2", "Z"],
+    WR3: ["WR3", "SLOT"],
+    TE: ["TE"]
+  }[role] || [role];
+
+  for (const pos of aliases) {
+    const player = depthStarter("offense", pos);
+    if (player) return player;
+  }
+
+  // Fallback: find a player currently assigned an offense depth role normalized to this role.
+  const roles = [];
+  for (const [position, slots] of Object.entries(game.depth?.offense || {})) {
+    const normalized = normalizePosition(position);
+    if (normalized === normalizePosition(role) || aliases.includes(position)) {
+      slots.forEach(id => {
+        const player = getPlayer(id);
+        if (player) roles.push(player);
+      });
+    }
+  }
+  return roles[0] || null;
+}
+
+function forceRushingProductionIfMissing(teamStats) {
+  if (!teamStats) return;
+  const scheme = game.settings?.offense || "Pro Style";
+  const runHeavy = ["Option", "Flexbone", "Wing-T", "Wishbone", "Power-I"].includes(scheme);
+  if (!runHeavy || safeNumber(teamStats.rushYards) > 0) return;
+
+  const qb = offensiveStarterByRole("QB");
+  const rb = offensiveStarterByRole("RB");
+  const fb = offensiveStarterByRole("FB");
+  const linePositions = ["LT", "LG", "C", "RG", "RT"];
+  const lineGrade = avg(linePositions.map(pos => playerFitValue(depthStarter("offense", pos), pos)), 50);
+  const runnerGrade = avg([qb, rb, fb].filter(Boolean).map(p => (
+    playerStatValue(p, "speed") +
+    playerStatValue(p, "agility") +
+    playerStatValue(p, "carry") +
+    playerStatValue(p, "vision") +
+    playerStatValue(p, "strength") * 0.35
+  ) / 4.35), 50);
+
+  teamStats.rushYards = clamp(Math.round(145 + (runnerGrade - 50) * 2.1 + (lineGrade - 50) * 1.4 + rand(-45, 70)), 45, 335);
+  teamStats.passYards = clamp(Math.round(safeNumber(teamStats.passYards)), 0, 260);
+  teamStats.totalYards = teamStats.rushYards + teamStats.passYards;
+  teamStats.rushTD = Math.max(safeNumber(teamStats.rushTD), clamp(Math.round(teamStats.rushYards / 115 + rand(-1, 1)), 0, 5));
+}
+
 function applyStroudStats(scheduledGame, participation) {
   const stroudIsHome = scheduledGame.homeId === "team_stroud";
   const sideKey = stroudIsHome ? "home" : "away";
@@ -2238,15 +2406,17 @@ function applyStroudStats(scheduledGame, participation) {
   const offense = firstDepth.offense;
   const defense = firstDepth.defense;
   const quarterShare = playerQuarterShares(participation);
+  forceRushingProductionIfMissing(teamStats);
+
   const gameLines = [];
 
-  const qb = getPlayer(offense.QB?.[0]);
-  const rb = getPlayer(offense.RB?.[0]);
-  const fb = getPlayer(offense.FB?.[0]);
-  const wr1 = getPlayer(offense.WR1?.[0]);
-  const wr2 = getPlayer(offense.WR2?.[0]);
-  const wr3 = getPlayer(offense.WR3?.[0]);
-  const te = getPlayer(offense.TE?.[0]);
+  const qb = offensiveStarterByRole('QB');
+  const rb = offensiveStarterByRole('RB');
+  const fb = offensiveStarterByRole('FB');
+  const wr1 = offensiveStarterByRole('WR1');
+  const wr2 = offensiveStarterByRole('WR2');
+  const wr3 = offensiveStarterByRole('WR3');
+  const te = offensiveStarterByRole('TE');
   const receivers = [wr1, wr2, wr3, te, rb, fb].filter(Boolean);
   const defenders = DEFENSE_POSITIONS.map(pos => getPlayer(defense[pos]?.[0])).filter(Boolean);
 
@@ -4028,28 +4198,11 @@ function renderStandings() {
 
 function renderAwards() {
   document.getElementById("view").innerHTML = `
-    <div class="grid">
-      ${game.awards.length ? game.awards.map(awardYear => `
-        <div class="card">
-          <h3>${awardYear.year} Awards</h3>
-          <div class="grid two">
-            <div>
-              ${awardYear.awards.map(item => `
-                <p><strong>${escapeHtml(item.label)}</strong><br><span class="gold-text">${escapeHtml(item.winner)}</span></p>
-              `).join("")}
-            </div>
-
-            <div>
-              <h4>All-District</h4>
-              <p>${awardYear.allDistrict.map(escapeHtml).join(", ")}</p>
-
-              <h4>All-State</h4>
-              <p>${awardYear.allState.map(escapeHtml).join(", ")}</p>
-            </div>
-          </div>
-        </div>
-      `).join("") : "<div class='card'><h3>No Awards Yet</h3><p class='muted'>Complete a season.</p></div>"}
+    <div class="card">
+      <h1>Awards</h1>
+      <p class="muted">Season awards, all-district, all-state, and state champions.</p>
     </div>
+    ${seasonAwardsHtml()}
   `;
 }
 
@@ -4730,6 +4883,7 @@ bindClick("newDynastyBtn", confirmNewDynasty);
 bindClick("topNewDynastyBtn", confirmNewDynasty);
 bindClick("advanceWeekBtn", advanceWeek);
 bindClick("watchGameBtn", watchGame);
+bindClick("startNextSeasonBtn", advanceToNextSeason);
 
 bindClick("topSaveLocalBtn", saveLocal);
 bindClick("topSaveCloudBtn", saveCloud);
@@ -4842,3 +4996,86 @@ try {
   reportFatalError(error);
   showLogin();
 }
+function finishPlayoffsAfterStroudElimination() {
+  if (!game.playoffBracket || !game.playoffBracket.length) return null;
+
+  let safety = 0;
+  while (game.playoffBracket.some(g => !g.played) && safety < 100) {
+    safety++;
+    const next = game.playoffBracket.find(g => !g.played);
+    if (!next) break;
+
+    // If Stroud is still in the next game, leave it for the user to play/watch.
+    if (next.homeId === "team_stroud" || next.awayId === "team_stroud") break;
+
+    simulateGame(next);
+  }
+
+  const played = game.playoffBracket.filter(g => g.played);
+  const finalGame = played[played.length - 1];
+  if (!finalGame) return null;
+
+  const championId = finalGame.homeScore >= finalGame.awayScore ? finalGame.homeId : finalGame.awayId;
+  const champion = getTeam(championId) || { name: "Unknown" };
+
+  game.stateChampion = {
+    year: game.year,
+    teamId: championId,
+    teamName: champion.name,
+    score: `${getTeam(finalGame.homeId)?.name || "Home"} ${finalGame.homeScore}, ${getTeam(finalGame.awayId)?.name || "Away"} ${finalGame.awayScore}`
+  };
+
+  game.seasonAwards = generateSeasonAwards();
+  return game.stateChampion;
+}
+
+function generateSeasonAwards() {
+  const players = [...(game.players || [])];
+
+  const bestBy = (label, statKey, fallbackPosition = "") => {
+    const sorted = players
+      .map(player => ({ player, value: safeNumber(player.seasonStats?.[statKey]) }))
+      .sort((a, b) => b.value - a.value);
+
+    const best = sorted[0];
+    if (!best || best.value <= 0) {
+      const fallback = [...players].sort((a, b) => overallPlayerScore(b) - overallPlayerScore(a))[0];
+      return { label, name: fallback?.name || "No winner", detail: fallbackPosition ? `${fallbackPosition} • coach vote` : "Coach vote" };
+    }
+
+    return { label, name: best.player.name, detail: `${best.value} ${label.toLowerCase()}` };
+  };
+
+  const allDistrict = [...players]
+    .sort((a, b) => overallPlayerScore(b) - overallPlayerScore(a))
+    .slice(0, 8)
+    .map(player => ({ name: player.name, detail: `${player.grade} • ${rolePositionOnly(player.id, "offense")} / ${rolePositionOnly(player.id, "defense")}` }));
+
+  const allState = [...players]
+    .sort((a, b) => overallPlayerScore(b) - overallPlayerScore(a))
+    .slice(0, 3)
+    .map(player => ({ name: player.name, detail: `${player.grade} • ${letterGrade(overallPlayerScore(player))}` }));
+
+  return {
+    year: game.year,
+    awards: [
+      bestBy("Passing yards", "passYards", "QB"),
+      bestBy("Rushing yards", "rushYards", "RB"),
+      bestBy("Receiving yards", "recYards", "WR"),
+      bestBy("Tackles", "tackles", "DEF"),
+      bestBy("Sacks", "sacks", "DEF"),
+      bestBy("Interceptions", "interceptions", "DB")
+    ],
+    allDistrict,
+    allState
+  };
+}
+
+function overallPlayerScore(player) {
+  if (!player) return 0;
+  const values = Object.values(player.stats || {}).map(v => safeNumber(v)).filter(v => Number.isFinite(v));
+  if (!values.length) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+

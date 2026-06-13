@@ -1481,3 +1481,23 @@ tr:hover td {
   flex: 1;
   min-width: 180px;
 }
+
+.offseason-card {
+  border-color: rgba(255,209,102,.35);
+  background: linear-gradient(135deg, rgba(255,209,102,.12), rgba(46,123,255,.08));
+}
+
+.champion-card {
+  border-color: rgba(255,209,102,.45);
+  background: linear-gradient(135deg, rgba(255,209,102,.18), rgba(46,123,255,.08));
+}
+.award-grid {
+  display: grid;
+  gap: 10px;
+}
+.award-card {
+  border: 1px solid rgba(255,255,255,.1);
+  background: rgba(255,255,255,.045);
+  border-radius: 14px;
+  padding: 10px;
+}
