@@ -1,6 +1,6 @@
 
 "use strict";
-const BUILD_VERSION = "v0.0.29-alpha";
+const BUILD_VERSION = "v0.0.30-alpha";
 const BUILD_DATE = "2026-06-12";
 
 function reportFatalError(error) {
@@ -1272,6 +1272,8 @@ let watchedGameEvents = [];
 let watchTimer = null;
 let watchIndex = 0;
 let pendingWatchedAdvance = false;
+let suppressAdvancePopups = false;
+let pendingWatchPaper = null;
 
 function canWatchThisWeek() {
   return game && (game.phase === "regular" || game.phase === "playoffs") && currentWeekHasStroudGame();
@@ -1289,12 +1291,35 @@ function watchGame() {
     return;
   }
 
-  watchedGameEvents = buildWatchedGameEvents();
+  const beforeWeek = game.week;
+  const beforePhase = game.phase;
+
+  try {
+    suppressAdvancePopups = true;
+    advanceWeek();
+  } catch (error) {
+    console.error(error);
+    toast(`Watch game failed: ${error.message}`);
+    return;
+  } finally {
+    suppressAdvancePopups = false;
+  }
+
+  const watchedGame = findMostRecentStroudGame(beforePhase, beforeWeek);
+  if (!watchedGame) {
+    toast("Watch Game could not find the finished Stroud game.");
+    render();
+    return;
+  }
+
+  pendingWatchPaper = game.newspapers?.[0] || null;
+  watchedGameEvents = buildWatchedGameEventsFromResult(watchedGame);
   watchIndex = 0;
-  pendingWatchedAdvance = true;
+  pendingWatchedAdvance = false;
   openWatchGameOverlay();
   renderWatchFrame();
   watchTimer = setInterval(playNextWatchEvent, 850);
+  render();
 }
 
 function closeWatchGameOverlay() {
@@ -1311,15 +1336,16 @@ function skipWatchedGame() {
 
 function finishWatchedGame() {
   closeWatchGameOverlay();
+  clearInterval(watchTimer);
+  watchTimer = null;
 
-  if (!pendingWatchedAdvance) return;
-  pendingWatchedAdvance = false;
+  render();
 
-  try {
-    advanceWeek();
-  } catch (error) {
-    console.error(error);
-    toast(`Watch game finish failed: ${error.message}`);
+  if (pendingWatchPaper) {
+    openPaper(pendingWatchPaper.id);
+    pendingWatchPaper = null;
+  } else {
+    toast("Game completed.");
   }
 }
 
@@ -1403,6 +1429,120 @@ function renderWatchFrame(done = false) {
 
   document.getElementById("finishWatchBtn")?.addEventListener("click", finishWatchedGame);
   document.getElementById("viewCurrentPaperBtn")?.addEventListener("click", closeWatchGameOverlay);
+}
+
+
+function findMostRecentStroudGame(previousPhase, previousWeek) {
+  const allGames = [
+    ...(game.schedule || []),
+    ...(game.playoffBracket || [])
+  ];
+
+  const stroudGames = allGames.filter(item =>
+    item.played &&
+    (item.homeId === "team_stroud" || item.awayId === "team_stroud")
+  );
+
+  if (!stroudGames.length) return null;
+
+  const exact = stroudGames.find(item => item.week === previousWeek && (item.phase === previousPhase || !item.phase));
+  if (exact) return exact;
+
+  return stroudGames[stroudGames.length - 1];
+}
+
+function buildWatchedGameEventsFromResult(scheduledGame) {
+  const home = getTeam(scheduledGame.homeId);
+  const away = getTeam(scheduledGame.awayId);
+  const homeFinal = Number(scheduledGame.homeScore || 0);
+  const awayFinal = Number(scheduledGame.awayScore || 0);
+  const homeStats = scheduledGame.stats?.home || { passYards: 0, rushYards: 0, turnovers: 0 };
+  const awayStats = scheduledGame.stats?.away || { passYards: 0, rushYards: 0, turnovers: 0 };
+
+  const events = [];
+  let homeScore = 0;
+  let awayScore = 0;
+  let yard = 25;
+  let possession = scheduledGame.homeId;
+  const totalPoints = homeFinal + awayFinal;
+  const scoringEvents = [];
+
+  function addScoringEvents(teamSide, finalScore) {
+    let remaining = finalScore;
+    while (remaining >= 7) {
+      scoringEvents.push({ side: teamSide, points: 7, title: "Touchdown!" });
+      remaining -= 7;
+    }
+    if (remaining >= 3) scoringEvents.push({ side: teamSide, points: 3, title: "Field Goal" });
+    else if (remaining > 0) scoringEvents.push({ side: teamSide, points: remaining, title: "Score" });
+  }
+
+  addScoringEvents("home", homeFinal);
+  addScoringEvents("away", awayFinal);
+  scoringEvents.sort(() => Math.random() - 0.5);
+
+  function eventPush(q, clock, title, text, big = false) {
+    events.push({
+      homeId: scheduledGame.homeId,
+      awayId: scheduledGame.awayId,
+      homeScore,
+      awayScore,
+      quarter: `Q${q}`,
+      clock,
+      downText: `${getTeam(possession)?.name || "Team"} ball • ${yardLabel(yard)}`,
+      fieldPct: clamp(yard, 2, 98),
+      title,
+      text,
+      big
+    });
+  }
+
+  eventPush(1, "12:00", "Kickoff", `${home.name} and ${away.name} are underway under the lights.`);
+
+  let scoringIndex = 0;
+  for (let q = 1; q <= 4; q++) {
+    for (let drive = 0; drive < 4; drive++) {
+      const clock = `${String(rand(1, 11)).padStart(2, "0")}:${String(rand(0, 59)).padStart(2, "0")}`;
+      const isHomePoss = possession === scheduledGame.homeId;
+      const stats = isHomePoss ? homeStats : awayStats;
+      const team = isHomePoss ? home : away;
+      const yards = Math.max(0, Number(stats.passYards || 0) + Number(stats.rushYards || 0));
+      const playText = possession === "team_stroud" ? stroudPlayName() : opponentPlayName(team);
+
+      const shouldScore = scoringIndex < scoringEvents.length && Math.random() < 0.38;
+      if (shouldScore) {
+        const score = scoringEvents[scoringIndex++];
+        possession = score.side === "home" ? scheduledGame.homeId : scheduledGame.awayId;
+        if (score.side === "home") homeScore += score.points;
+        else awayScore += score.points;
+        yard = score.points === 3 ? rand(65, 82) : rand(88, 99);
+        eventPush(q, clock, score.title, `${getTeam(possession).name} finishes the drive for ${score.points} points.`, true);
+      } else {
+        const gain = clamp(Math.round(yards / 9 + rand(-8, 14)), -4, 42);
+        yard = isHomePoss ? clamp(yard + gain, 1, 99) : clamp(yard - gain, 1, 99);
+        if (gain >= 25) eventPush(q, clock, "Big Gain", `${playText} breaks loose for ${gain} yards.`, true);
+        else if (gain >= 8) eventPush(q, clock, "First Down", `${playText} keeps the chains moving.`);
+        else eventPush(q, clock, "Drive Stalls", `${team.name} punts it away.`);
+      }
+
+      possession = possession === scheduledGame.homeId ? scheduledGame.awayId : scheduledGame.homeId;
+    }
+  }
+
+  while (scoringIndex < scoringEvents.length) {
+    const score = scoringEvents[scoringIndex++];
+    possession = score.side === "home" ? scheduledGame.homeId : scheduledGame.awayId;
+    if (score.side === "home") homeScore += score.points;
+    else awayScore += score.points;
+    yard = score.points === 3 ? rand(65, 82) : rand(88, 99);
+    eventPush(4, "0:30", score.title, `${getTeam(possession).name} adds late points.`, true);
+  }
+
+  homeScore = homeFinal;
+  awayScore = awayFinal;
+  eventPush(4, "0:00", "Final Whistle", `Final: ${home.name} ${homeFinal}, ${away.name} ${awayFinal}.`, true);
+
+  return events;
 }
 
 function buildWatchedGameEvents() {
@@ -1560,7 +1700,7 @@ function advanceWeek() {
 
   saveLocal();
   render();
-  showFinalResultThenPaper();
+  if (!suppressAdvancePopups) showFinalResultThenPaper();
 }
 
 function runRegularWeek() {
@@ -3992,19 +4132,32 @@ function bindPlayerPositionEditor(player) {
 }
 
 
+function portraitHash(input) {
+  const str = String(input || "player");
+  let hash = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return Math.abs(hash >>> 0);
+}
+
 function ensurePlayerPortrait(player) {
-  if (!player.portrait) {
-    const seed = Math.abs(Number(player.id || 1) * 9301 + player.name.split("").reduce((sum, ch) => sum + ch.charCodeAt(0), 0) * 49297) % 233280;
-    const pick = (arr, offset = 0) => arr[(seed + offset) % arr.length];
+  const version = 2;
+  if (!player.portrait || player.portrait.version !== version) {
+    const seed = portraitHash(`${player.id}-${player.name}-${player.grade}-${player.height}-${player.weight}`);
+    const pick = (arr, offset = 0) => arr[(seed + offset * 97) % arr.length];
 
     player.portrait = {
-      skin: pick(["#f2c7a4", "#d99b73", "#b87955", "#8f563b", "#6f3f2b"], 1),
-      hair: pick(["#1f1410", "#3b2418", "#5b351f", "#d7b56d", "#111827", "#7a4a2a"], 3),
-      hairStyle: pick(["short", "flat", "curly", "shag", "mohawk", "buzz"], 5),
+      version,
+      skin: pick(["#f6d2b8", "#f1c6a8", "#e8b892", "#f3d7c4", "#dfaa83"], 1),
+      hair: pick(["#1f1410", "#3b2418", "#5b351f", "#d7b56d", "#111827", "#7a4a2a", "#2a1b14"], 3),
+      hairStyle: pick(["short", "flat", "curly", "shag", "mohawk", "buzz", "side"], 5),
       eyes: pick(["#111827", "#263238", "#214761", "#3c2a1e"], 7),
-      mouth: pick(["neutral", "smile", "serious"], 9),
-      facialHair: player.grade === "FR" ? "none" : pick(["none", "none", "stache", "goatee"], 11),
-      face: pick(["round", "square", "long"], 13)
+      mouth: pick(["neutral", "smile", "serious", "grin"], 9),
+      facialHair: player.grade === "FR" ? "none" : pick(["none", "none", "stache", "goatee", "chin"], 11),
+      face: pick(["round", "square", "long", "wide"], 13),
+      brows: pick(["calm", "angry", "raised"], 15)
     };
   }
   return player.portrait;
@@ -4012,91 +4165,41 @@ function ensurePlayerPortrait(player) {
 
 function playerPortraitSvg(player) {
   const p = ensurePlayerPortrait(player);
-  const faceW = p.face === "square" ? 54 : p.face === "long" ? 48 : 52;
+  const faceW = p.face === "square" ? 54 : p.face === "long" ? 48 : p.face === "wide" ? 60 : 52;
   const faceH = p.face === "long" ? 62 : 56;
-  const mouthPath = p.mouth === "smile" ? "M48 70 Q58 78 68 70" : p.mouth === "serious" ? "M48 72 L68 72" : "M50 72 Q58 74 66 72";
+  const mouthPath = p.mouth === "smile" ? "M48 70 Q58 78 68 70" : p.mouth === "serious" ? "M48 72 L68 72" : p.mouth === "grin" ? "M48 69 Q58 80 68 69" : "M50 72 Q58 74 66 72";
+  const browLeft = p.brows === "angry" ? "M42 50 L53 47" : p.brows === "raised" ? "M42 47 Q48 44 53 47" : "M42 50 Q48 48 53 50";
+  const browRight = p.brows === "angry" ? "M64 47 L75 50" : p.brows === "raised" ? "M64 47 Q70 44 75 47" : "M64 50 Q70 48 75 50";
+
   const hair = {
-    buzz: `<rect x="35" y="22" width="46" height="18" rx="8" fill="${p.hair}"/>`,
+    buzz: `<rect x="35" y="24" width="46" height="15" rx="7" fill="${p.hair}"/>`,
     short: `<path d="M34 44 Q38 20 58 20 Q80 21 83 45 Q70 32 58 34 Q45 32 34 44Z" fill="${p.hair}"/>`,
     flat: `<path d="M34 39 Q38 18 80 25 L84 42 Q62 32 34 39Z" fill="${p.hair}"/>`,
     curly: `<path d="M33 42 C30 24 43 18 50 24 C56 14 68 19 70 26 C82 22 88 35 82 47 C68 33 49 32 33 42Z" fill="${p.hair}"/>`,
     shag: `<path d="M31 42 Q40 18 60 21 Q82 23 86 45 Q78 39 74 56 Q68 40 59 38 Q45 39 38 56 Q36 45 31 42Z" fill="${p.hair}"/>`,
-    mohawk: `<path d="M54 14 L64 14 L70 42 L48 42Z" fill="${p.hair}"/><path d="M36 43 Q45 31 58 31 Q74 31 82 44 L82 51 Q61 41 36 51Z" fill="${p.hair}"/>`
+    mohawk: `<path d="M54 14 L64 14 L70 42 L48 42Z" fill="${p.hair}"/><path d="M36 43 Q45 31 58 31 Q74 31 82 44 L82 51 Q61 41 36 51Z" fill="${p.hair}"/>`,
+    side: `<path d="M32 43 Q39 20 60 21 Q78 22 84 41 Q62 31 43 39 Q38 49 34 58 Q31 49 32 43Z" fill="${p.hair}"/>`
   }[p.hairStyle];
 
   const facial = p.facialHair === "stache"
     ? `<path d="M48 66 Q56 62 64 66 Q56 70 48 66Z" fill="${p.hair}"/>`
     : p.facialHair === "goatee"
       ? `<path d="M52 75 Q58 85 64 75 Q59 80 52 75Z" fill="${p.hair}"/>`
-      : "";
-
-  return `
-    <svg viewBox="0 0 116 116" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${escapeHtml(player.name)} portrait">
-      <rect width="116" height="116" fill="#081426"/>
-      <path d="M24 110 Q58 82 92 110Z" fill="#173fb8"/>
-      <path d="M31 110 Q58 90 85 110Z" fill="#f7f7f7" opacity=".95"/>
-      <rect x="${58 - faceW/2}" y="32" width="${faceW}" height="${faceH}" rx="${p.face === "square" ? 13 : 24}" fill="${p.skin}"/>
-      ${hair}
-      <circle cx="47" cy="57" r="4" fill="${p.eyes}"/>
-      <circle cx="69" cy="57" r="4" fill="${p.eyes}"/>
-      <path d="M42 50 Q48 47 53 50" stroke="#111827" stroke-width="3" fill="none" stroke-linecap="round"/>
-      <path d="M64 50 Q70 47 75 50" stroke="#111827" stroke-width="3" fill="none" stroke-linecap="round"/>
-      <path d="M58 59 L54 66 L61 66" stroke="#8b5a40" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="${mouthPath}" stroke="#3d261b" stroke-width="3" fill="none" stroke-linecap="round"/>
-      ${facial}
-    </svg>
-  `;
-}
-
-
-function ensurePlayerPortrait(player) {
-  if (!player.portrait) {
-    const seed = Math.abs(Number(player.id || 1) * 9301 + player.name.split("").reduce((sum, ch) => sum + ch.charCodeAt(0), 0) * 49297) % 233280;
-    const pick = (arr, offset = 0) => arr[(seed + offset) % arr.length];
-    player.portrait = {
-      skin: pick(["#f2c7a4", "#d99b73", "#b87955", "#8f563b", "#6f3f2b"], 1),
-      hair: pick(["#1f1410", "#3b2418", "#5b351f", "#d7b56d", "#111827", "#7a4a2a"], 3),
-      hairStyle: pick(["short", "flat", "curly", "shag", "mohawk", "buzz"], 5),
-      eyes: pick(["#111827", "#263238", "#214761", "#3c2a1e"], 7),
-      mouth: pick(["neutral", "smile", "serious"], 9),
-      facialHair: player.grade === "FR" ? "none" : pick(["none", "none", "stache", "goatee"], 11),
-      face: pick(["round", "square", "long"], 13)
-    };
-  }
-  return player.portrait;
-}
-
-function playerPortraitSvg(player) {
-  const p = ensurePlayerPortrait(player);
-  const faceW = p.face === "square" ? 54 : p.face === "long" ? 48 : 52;
-  const faceH = p.face === "long" ? 62 : 56;
-  const mouthPath = p.mouth === "smile" ? "M48 70 Q58 78 68 70" : p.mouth === "serious" ? "M48 72 L68 72" : "M50 72 Q58 74 66 72";
-  const hair = {
-    buzz: `<rect x="35" y="22" width="46" height="18" rx="8" fill="${p.hair}"/>`,
-    short: `<path d="M34 44 Q38 20 58 20 Q80 21 83 45 Q70 32 58 34 Q45 32 34 44Z" fill="${p.hair}"/>`,
-    flat: `<path d="M34 39 Q38 18 80 25 L84 42 Q62 32 34 39Z" fill="${p.hair}"/>`,
-    curly: `<path d="M33 42 C30 24 43 18 50 24 C56 14 68 19 70 26 C82 22 88 35 82 47 C68 33 49 32 33 42Z" fill="${p.hair}"/>`,
-    shag: `<path d="M31 42 Q40 18 60 21 Q82 23 86 45 Q78 39 74 56 Q68 40 59 38 Q45 39 38 56 Q36 45 31 42Z" fill="${p.hair}"/>`,
-    mohawk: `<path d="M54 14 L64 14 L70 42 L48 42Z" fill="${p.hair}"/><path d="M36 43 Q45 31 58 31 Q74 31 82 44 L82 51 Q61 41 36 51Z" fill="${p.hair}"/>`
-  }[p.hairStyle];
-
-  const facial = p.facialHair === "stache"
-    ? `<path d="M48 66 Q56 62 64 66 Q56 70 48 66Z" fill="${p.hair}"/>`
-    : p.facialHair === "goatee"
-      ? `<path d="M52 75 Q58 85 64 75 Q59 80 52 75Z" fill="${p.hair}"/>`
-      : "";
+      : p.facialHair === "chin"
+        ? `<ellipse cx="58" cy="78" rx="7" ry="4" fill="${p.hair}"/>`
+        : "";
 
   return `
     <svg viewBox="0 0 116 116" xmlns="http://www.w3.org/2000/svg">
       <rect width="116" height="116" fill="#081426"/>
       <path d="M24 110 Q58 82 92 110Z" fill="#173fb8"/>
-      <path d="M31 110 Q58 90 85 110Z" fill="#f7f7f7" opacity=".95"/>
+      <path d="M31 110 Q58 90 85 110Z" fill="#f7f7f7" opacity=".96"/>
       <rect x="${58 - faceW/2}" y="32" width="${faceW}" height="${faceH}" rx="${p.face === "square" ? 13 : 24}" fill="${p.skin}"/>
       ${hair}
       <circle cx="47" cy="57" r="4" fill="${p.eyes}"/>
       <circle cx="69" cy="57" r="4" fill="${p.eyes}"/>
-      <path d="M42 50 Q48 47 53 50" stroke="#111827" stroke-width="3" fill="none" stroke-linecap="round"/>
-      <path d="M64 50 Q70 47 75 50" stroke="#111827" stroke-width="3" fill="none" stroke-linecap="round"/>
+      <path d="${browLeft}" stroke="#111827" stroke-width="3" fill="none" stroke-linecap="round"/>
+      <path d="${browRight}" stroke="#111827" stroke-width="3" fill="none" stroke-linecap="round"/>
       <path d="M58 59 L54 66 L61 66" stroke="#8b5a40" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
       <path d="${mouthPath}" stroke="#3d261b" stroke-width="3" fill="none" stroke-linecap="round"/>
       ${facial}
