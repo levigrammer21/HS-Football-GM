@@ -1,6 +1,6 @@
 
 "use strict";
-const BUILD_VERSION = "v0.0.33-alpha";
+const BUILD_VERSION = "v0.0.34-alpha";
 const BUILD_DATE = "2026-06-12";
 
 function reportFatalError(error) {
@@ -314,10 +314,7 @@ const LAST_NAMES = [
 
 function bindClick(id, handler) {
   const node = document.getElementById(id);
-  if (!node) {
-    console.warn(`Missing button: ${id}`);
-    return;
-  }
+  if (!node || typeof handler !== "function") return;
   node.addEventListener("click", handler);
 }
 
@@ -5079,3 +5076,97 @@ function overallPlayerScore(player) {
 }
 
 
+function offseasonDevelopPlayer(player) {
+  const work = safeNumber(player.hidden?.workEthic, 55);
+  const genetics = safeNumber(player.hidden?.genetics, 55);
+  const growthRoll = (work + genetics) / 2;
+
+  const heightGain = Math.random() < (genetics / 165) ? rand(0, 2) : 0;
+  const weightGain = clamp(Math.round(rand(3, 16) * (genetics / 75)), 1, 22);
+
+  player.height = safeNumber(player.height, 68) + heightGain;
+  player.weight = safeNumber(player.weight, 170) + weightGain;
+
+  for (const key of Object.keys(player.stats || {})) {
+    const gain = Math.max(0, Math.round((growthRoll - 35) / 32 + rand(0, 2)));
+    player.stats[key] = clamp(safeNumber(player.stats[key]) + gain, 1, 99);
+  }
+}
+
+function advanceToNextSeason() {
+  if (!game) return;
+
+  const oldYear = game.year || new Date().getFullYear();
+  const graduating = (game.players || []).filter(player => player.grade === "SR");
+  const returning = (game.players || []).filter(player => player.grade !== "SR");
+
+  game.history = game.history || {};
+  game.history.champions = game.history.champions || [];
+  if (game.stateChampion) game.history.champions.unshift(game.stateChampion);
+  game.history.awards = game.history.awards || [];
+  if (game.seasonAwards) game.history.awards.unshift(game.seasonAwards);
+
+  returning.forEach(player => {
+    player.grade = player.grade === "JR" ? "SR" : player.grade === "SO" ? "JR" : "SO";
+    offseasonDevelopPlayer(player);
+    player.seasonStats = emptyPlayerStats();
+  });
+
+  const freshmanCount = rand(4, 12);
+  const freshmen = [];
+  for (let i = 0; i < freshmanCount; i++) {
+    const player = generatePlayer("FR");
+    ensurePlayerPortrait(player);
+    freshmen.push(player);
+  }
+
+  game.players = [...returning, ...freshmen];
+  game.year = oldYear + 1;
+  game.week = 1;
+  game.phase = "regular";
+  game.depth = emptyDepthChart();
+  game.schedule = makeSchedule(game.year);
+  game.playoffBracket = [];
+  game.newspapers = [];
+  game.lastResult = null;
+  game.stateChampion = null;
+  game.seasonAwards = null;
+  game.offseasonReason = "";
+
+  recalculateTeamRatings();
+  saveLocalSilent();
+  render();
+
+  showModal(
+    "New Season",
+    `${game.year} season`,
+    `
+      <div class="card">
+        <h3>Graduation</h3>
+        <p class="muted">${graduating.length} seniors graduated from Stroud.</p>
+      </div>
+      <div class="card">
+        <h3>Incoming Freshmen</h3>
+        <p class="muted">${freshmen.length} new freshmen have entered the program.</p>
+        ${freshmen.map(player => `<div class="mini-card"><strong>${escapeHtml(player.name)}</strong><br>${player.grade} • ${formatHeight(player.height)} • ${player.weight} lbs</div>`).join("")}
+      </div>
+      <div class="card">
+        <h3>Depth Chart Reset</h3>
+        <p class="muted">Your varsity two-deep has been cleared. Set starters and backups before Week 1.</p>
+        <button id="newSeasonDepthBtn">Set Depth Chart</button>
+      </div>
+    `
+  );
+
+  setTimeout(() => {
+    const button = document.getElementById("newSeasonDepthBtn");
+    if (button) button.addEventListener("click", () => {
+      closeModal();
+      navigate("depth");
+    });
+  }, 0);
+}
+
+
+
+window.advanceToNextSeason = advanceToNextSeason;
