@@ -1,6 +1,6 @@
 
 "use strict";
-const BUILD_VERSION = "v0.0.35-alpha";
+const BUILD_VERSION = "v0.0.36-alpha";
 const BUILD_DATE = "2026-06-12";
 
 function reportFatalError(error) {
@@ -2073,8 +2073,16 @@ function pbpMakeWatchEvent(scheduledGame, state, title, text, big = false) {
   };
 }
 
+
+function syncStroudTeamSchemes() {
+  const stroud = getTeam("team_stroud");
+  if (!stroud || !game?.settings) return;
+  stroud.offense = game.settings.offense || stroud.offense || "Pro Style";
+  stroud.defense = game.settings.defense || stroud.defense || "4-4";
+}
+
 function simulateGame(scheduledGame) {
-  syncStroudTeamSchemes();
+  if (typeof syncStroudTeamSchemes === 'function') syncStroudTeamSchemes();
 
   const home = getTeam(scheduledGame.homeId);
   const away = getTeam(scheduledGame.awayId);
