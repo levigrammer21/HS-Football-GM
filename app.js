@@ -1,6 +1,6 @@
 
 "use strict";
-const BUILD_VERSION = "v0.0.42-alpha";
+const BUILD_VERSION = "v0.0.43-alpha";
 const BUILD_DATE = "2026-06-12";
 
 function reportFatalError(error) {
@@ -1429,6 +1429,10 @@ function checkOffseasonAfterAdvance() {
   }
 }
 
+
+function resetAdvanceWeekLock() {
+  advanceWeekLocked = false;
+}
 
 function advanceWeek() {
   if (advanceWeekLocked) return;
@@ -3956,7 +3960,25 @@ function homeSeasonSummary() {
   };
 }
 
+
+function getHomeInfo() {
+  try {
+    if (typeof homeSeasonSummary === "function") return homeSeasonSummary();
+  } catch (error) {
+    console.warn("homeSeasonSummary failed", error);
+  }
+
+  return {
+    record: `${game?.team?.wins || 0}-${game?.team?.losses || 0}`,
+    district: `${game?.team?.districtWins || 0}-${game?.team?.districtLosses || 0}`,
+    rank: "Unranked",
+    next: { name: "No game scheduled", week: "", tag: "" }
+  };
+}
+
 function renderDashboard() {
+  const homeInfo = getHomeInfo();
+
   const stroud = getTeam("team_stroud");
   const nextGame = nextStroudGame();
   const lastGame = latestStroudGame();
@@ -3984,7 +4006,7 @@ function renderDashboard() {
             <h3>Next Game</h3>
             ${nextOpponent ? `
               <strong>${escapeHtml(nextOpponent.name)} ${escapeHtml(nextOpponent.mascot)}</strong>
-              <p class="muted">${escapeHtml(nextGame.label || `Week ${homeInfo.next.week}`)} ${nextGame.district ? "• District" : ""}</p>
+              <p class="muted">${escapeHtml(nextGame.label || `Week ${getHomeInfo().next.week}`)} ${nextGame.district ? "• District" : ""}</p>
               ${RIVALS.includes(nextOpponent.name) ? `<span class="pill gold">${escapeHtml(game.rivalries?.[nextOpponent.name]?.trophy || "Rivalry Game")}</span>` : ""}
             ` : "<p class='muted'>No game scheduled.</p>"}
           </div>
