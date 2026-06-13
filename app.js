@@ -1,6 +1,6 @@
 
 "use strict";
-const BUILD_VERSION = "v0.0.37-alpha";
+const BUILD_VERSION = "v0.0.38-alpha";
 const BUILD_DATE = "2026-06-12";
 
 function reportFatalError(error) {
@@ -1280,9 +1280,23 @@ let pendingWatchedAdvance = false;
 let suppressAdvancePopups = false;
 let pendingWatchPaper = null;
 
-function canWatchThisWeek() {
-  return game && (game.phase === "regular" || game.phase === "playoffs") && currentWeekHasStroudGame();
+
+function currentStroudScheduledGame() {
+  if (!game) return null;
+  const games = game.phase === "playoffs" ? (game.playoffBracket || []) : (game.schedule || []);
+  return games.find(g => !g.played && (g.homeId === "team_stroud" || g.awayId === "team_stroud")) || null;
 }
+
+function simulateGameForWatch(scheduledGame) {
+  if (!scheduledGame) return null;
+  simulateGame(scheduledGame);
+  return scheduledGame;
+}
+
+function canWatchThisWeek() {
+  return !!currentStroudScheduledGame();
+}
+
 
 function lastFinishedStroudGame() {
   const games = [...(game.schedule || []), ...(game.playoffBracket || [])]
@@ -1388,7 +1402,8 @@ function buildSafeWatchEvents(finishedGame) {
 }
 
 function watchGame() {
-  if (!canWatchThisWeek()) {
+  const scheduledGame = currentStroudScheduledGame();
+  if (!scheduledGame) {
     toast("No Stroud game to watch this week.");
     return;
   }
@@ -1399,37 +1414,33 @@ function watchGame() {
     return;
   }
 
-  let finishedGame = null;
   try {
-    suppressAdvancePopups = true;
-    const beforePlayed = new Set([...(game.schedule || []), ...(game.playoffBracket || [])].filter(g => g.played).map(g => g.id || `${g.week}-${g.homeId}-${g.awayId}`));
-    advanceWeek();
-    finishedGame = [...(game.schedule || []), ...(game.playoffBracket || [])]
-      .filter(g => g.played && (g.homeId === "team_stroud" || g.awayId === "team_stroud"))
-      .find(g => !beforePlayed.has(g.id || `${g.week}-${g.homeId}-${g.awayId}`)) || lastFinishedStroudGame();
+    simulateGameForWatch(scheduledGame);
+    if (game.phase === "regular") {
+      game.week += 1;
+      if (game.week > 10) startPlayoffs();
+    } else if (game.phase === "playoffs") {
+      advancePlayoffBracketAfterGame?.(scheduledGame);
+    }
+
+    makeWeeklyPaper();
+    recalculateTeamRatings();
+    saveLocalSilent();
+
+    pendingWatchPaper = latestNewspaper();
+    watchedGameEvents = scheduledGame.watchEvents?.length ? scheduledGame.watchEvents : buildSafeWatchEvents(scheduledGame);
+    watchIndex = 0;
+    openWatchGameOverlay();
+    renderWatchFrame();
+    clearInterval(watchTimer);
+    watchTimer = setInterval(playNextWatchEvent, 850);
+    render();
   } catch (error) {
     console.error(error);
     toast(`Watch game failed: ${error.message}`);
-    return;
-  } finally {
-    suppressAdvancePopups = false;
   }
-
-  if (!finishedGame) {
-    toast("Watch Game could not find the finished game.");
-    render();
-    return;
-  }
-
-  pendingWatchPaper = latestNewspaper();
-  watchedGameEvents = finishedGame.watchEvents?.length ? finishedGame.watchEvents : buildSafeWatchEvents(finishedGame);
-  watchIndex = 0;
-  openWatchGameOverlay();
-  renderWatchFrame();
-  clearInterval(watchTimer);
-  watchTimer = setInterval(playNextWatchEvent, 850);
-  render();
 }
+
 
 function closeWatchGameOverlay() {
   clearInterval(watchTimer);
@@ -1456,6 +1467,7 @@ function finishWatchedGame() {
     toast("Game completed.");
   }
 }
+
 
 function openWatchGameOverlay() {
   const panel = document.getElementById("watchGamePanel");
@@ -2016,7 +2028,7 @@ function pbpAddSeasonStats(player, stats) {
 }
 
 function pbpClock(q, playIndex) {
-  const playsPerQ = 24;
+  const playsPerQ = 28;
   const remaining = clamp(12 * 60 - Math.round((playIndex % playsPerQ) * (12 * 60 / playsPerQ)), 0, 12 * 60);
   return `${String(Math.floor(remaining / 60)).padStart(2, "0")}:${String(remaining % 60).padStart(2, "0")}`;
 }
@@ -2102,13 +2114,21 @@ function scaleStroudPlayerLinesToTeam(scheduledGame, playerLines, statKey, targe
 }
 
 function enforceGameStatRealism(scheduledGame, playerLines) {
+  const home = getTeam(scheduledGame.homeId) || {};
+  const away = getTeam(scheduledGame.awayId) || {};
+  const gap = Math.abs(Number(home.power || 50) - Number(away.power || 50));
+  const maxTotal = gap > 28 ? 620 : gap > 18 ? 560 : 500;
+
   for (const side of ["home", "away"]) {
     const s = scheduledGame.stats?.[side];
     if (!s) continue;
     const total = Number(s.passYards || 0) + Number(s.rushYards || 0);
-    if (total <= 430) continue;
+    if (total <= maxTotal) {
+      s.totalYards = total;
+      continue;
+    }
 
-    const ratio = 430 / total;
+    const ratio = maxTotal / total;
     s.passYards = Math.round(Number(s.passYards || 0) * ratio);
     s.rushYards = Math.round(Number(s.rushYards || 0) * ratio);
     s.totalYards = s.passYards + s.rushYards;
@@ -2122,6 +2142,7 @@ function enforceGameStatRealism(scheduledGame, playerLines) {
     scaleStroudPlayerLinesToTeam(scheduledGame, playerLines, "recYards", s.passYards);
   }
 }
+
 
 function simulateGame(scheduledGame) {
   if (typeof syncStroudTeamSchemes === 'function') syncStroudTeamSchemes();
@@ -2181,7 +2202,7 @@ function simulateGame(scheduledGame) {
 
   let possessionSide = "home";
   let driveCount = 0;
-  const maxDrives = 18;
+  const maxDrives = 22;
 
   while (driveCount < maxDrives) {
     driveCount += 1;
@@ -2201,7 +2222,7 @@ function simulateGame(scheduledGame) {
     const defTalent = pbpDefTalent(defense, activeDepth);
     const advantage = ((runTalent + passTalent) / 2) - defTalent + (state.offenseSide === "home" ? 1.5 : 0);
 
-    for (let playInDrive = 0; playInDrive < 9; playInDrive++) {
+    for (let playInDrive = 0; playInDrive < 10; playInDrive++) {
       state.playIndex += 1;
       state.quarter = clamp(Math.floor((state.playIndex - 1) / 32) + 1, 1, 4);
 
@@ -2232,11 +2253,15 @@ function simulateGame(scheduledGame) {
           ? p2Avg([statOf(runner, "speed"), statOf(runner, "agility"), statOf(runner, "carry"), statOf(runner, "vision"), pbpLineGrade(offenseRoster)], runTalent)
           : runTalent;
 
-        const ypcBase = 3.05 + (talent - defTalent) * 0.035 + advantage * 0.010;
-        yards = Math.round(clamp(bell(ypcBase, 3.2, -4, 22), -6, 45));
+        const ypcBase = 3.55 + (talent - defTalent) * 0.042 + advantage * 0.014;
+        yards = Math.round(clamp(bell(ypcBase, 3.9, -4, 28), -6, 55));
 
         if (Math.random() < 0.018 + Math.max(0, defTalent - talent) / 900) {
           sideStats.turnovers += 1;
+          if (Math.random() < 0.18) {
+            score(state.defenseSide, 7, "defTD");
+            addWatch("Defensive Touchdown!", `${defense.name} scoops it and scores.`, true);
+          }
           if (runner) {
             pbpAddSeasonStats(runner, { games: 1 });
             pbpAddLine(playerLines, runner, {});
@@ -2271,6 +2296,10 @@ function simulateGame(scheduledGame) {
 
         if (turnoverRoll < 0.025 + Math.max(0, defTalent - throwTalent) / 700) {
           sideStats.turnovers += 1;
+          if (Math.random() < 0.16) {
+            score(state.defenseSide, 7, "defTD");
+            addWatch("Pick Six!", `${defense.name} takes it back the other way.`, true);
+          }
           if (qb) pbpAddSeasonStats(qb, { games: 1, intThrown: 1 });
           addWatch("Interception!", `${qbName} is picked off.`, true);
           break;
@@ -2281,7 +2310,7 @@ function simulateGame(scheduledGame) {
           text = `${qbName} throws incomplete.`;
           yards = 0;
         } else {
-          yards = Math.round(clamp(bell(6.6 + (throwTalent - defTalent) * 0.045, 5.8, -2, 32), -4, 55));
+          yards = Math.round(clamp(bell(7.4 + (throwTalent - defTalent) * 0.052, 6.4, -2, 38), -4, 62));
           sideStats.passYards += Math.max(0, yards);
 
           if (qb) {
@@ -5748,3 +5777,7 @@ function advanceToNextSeason() {
 
 
 window.advanceToNextSeason = advanceToNextSeason;
+
+function advancePlayoffBracketAfterGame(scheduledGame) {
+  if (typeof buildNextPlayoffRound === "function") buildNextPlayoffRound();
+}

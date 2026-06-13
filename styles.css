@@ -1587,3 +1587,39 @@ tr:hover td {
     padding: 8px 5px !important;
   }
 }
+
+/* v38 newspaper narrow screen hard fix */
+.modal-body {
+  overflow-x: hidden;
+}
+.newsprint, .paper-sheet, .paper-page {
+  max-width: 100% !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+@media (max-width: 600px) {
+  .modal-panel {
+    width: 94vw !important;
+    max-width: 94vw !important;
+  }
+  .modal-body {
+    padding-left: 10px !important;
+    padding-right: 10px !important;
+  }
+  .newsprint, .paper-sheet, .paper-page {
+    padding: 16px !important;
+    overflow-x: hidden !important;
+  }
+  .newsprint table, .paper-sheet table, .paper-page table {
+    display: table;
+    width: 100% !important;
+    table-layout: fixed !important;
+  }
+  .newsprint th, .newsprint td,
+  .paper-sheet th, .paper-sheet td,
+  .paper-page th, .paper-page td {
+    font-size: 12px !important;
+    padding: 7px 4px !important;
+    overflow-wrap: anywhere !important;
+  }
+}
