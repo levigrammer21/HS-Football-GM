@@ -1,6 +1,6 @@
 
 "use strict";
-const BUILD_VERSION = "v0.0.26-alpha";
+const BUILD_VERSION = "v0.0.27-alpha";
 const BUILD_DATE = "2026-06-12";
 
 function reportFatalError(error) {
@@ -1056,7 +1056,16 @@ function getPlayer(playerId) {
   return game.players.find(player => player.id === playerId);
 }
 
+
+function syncStroudTeamSchemes() {
+  const stroud = getTeam("team_stroud");
+  if (!stroud || !game?.settings) return;
+  stroud.offense = game.settings.offense;
+  stroud.defense = game.settings.defense;
+}
+
 function recalculateTeamRatings() {
+  syncStroudTeamSchemes();
   const stroud = getTeam("team_stroud");
 
   const offenseStarters = startersForSide("offense");
@@ -1594,6 +1603,7 @@ function runRegularWeek() {
 }
 
 function simulateGame(scheduledGame) {
+  syncStroudTeamSchemes();
   const home = getTeam(scheduledGame.homeId);
   const away = getTeam(scheduledGame.awayId);
 
@@ -1664,7 +1674,8 @@ function simulateScore(home, away) {
 }
 
 function simulateBoxScore(team, opponent, points) {
-  const profile = SCHEME_PROFILES[team.offense] || SCHEME_PROFILES["Pro Style"];
+  const activeOffense = team.id === "team_stroud" ? game.settings.offense : team.offense;
+  const profile = SCHEME_PROFILES[activeOffense] || SCHEME_PROFILES["Pro Style"];
   const passNumber = Number(profile.runPass.match(/(\d+)% pass/)?.[1] || 50);
   const passRate = clamp(passNumber / 100 + rand(-5, 5) / 100, 0.1, 0.82);
   const matchup = schemeMatchupRating(team, opponent);
@@ -1698,7 +1709,7 @@ function simulateBoxScore(team, opponent, points) {
     passTD,
     rushTD,
     turnovers: rand(0, team.offenseRating < 45 ? 4 : 2),
-    scheme: team.offense,
+    scheme: activeOffense,
     runPass: profile.runPass,
     matchup: round1(matchup)
   };
@@ -2785,6 +2796,7 @@ function migrateSave() {
   game.rivalries ||= createRivalries();
   ensureRivalTeams();
   repairScheduleIfNeeded();
+  syncStroudTeamSchemes();
 
   for (const player of game.players) {
     player.offensePosition ||= recommendPositions(player)[0] || "WR";
