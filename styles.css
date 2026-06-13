@@ -1623,3 +1623,15 @@ tr:hover td {
     overflow-wrap: anywhere !important;
   }
 }
+
+/* v39: Watch Game removed */
+#watchGameBtn,
+.watch-game-btn,
+.watch-overlay,
+#watchOverlay {
+  display: none !important;
+}
+
+.page-action-row:empty {
+  display: none;
+}

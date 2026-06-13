@@ -1,6 +1,6 @@
 
 "use strict";
-const BUILD_VERSION = "v0.0.38-alpha";
+const BUILD_VERSION = "v0.0.39-alpha";
 const BUILD_DATE = "2026-06-12";
 
 function reportFatalError(error) {
@@ -1271,285 +1271,41 @@ function currentAssignedGradeText(player) {
 function depthOptionLabel(player, position) {
   return positionLabelForDropdown(player, position);
 }
-
-
-let watchedGameEvents = [];
-let watchTimer = null;
-let watchIndex = 0;
-let pendingWatchedAdvance = false;
 let suppressAdvancePopups = false;
-let pendingWatchPaper = null;
 
 
-function currentStroudScheduledGame() {
-  if (!game) return null;
-  const games = game.phase === "playoffs" ? (game.playoffBracket || []) : (game.schedule || []);
-  return games.find(g => !g.played && (g.homeId === "team_stroud" || g.awayId === "team_stroud")) || null;
-}
-
-function simulateGameForWatch(scheduledGame) {
-  if (!scheduledGame) return null;
-  simulateGame(scheduledGame);
-  return scheduledGame;
-}
-
-function canWatchThisWeek() {
-  return !!currentStroudScheduledGame();
-}
 
 
-function lastFinishedStroudGame() {
-  const games = [...(game.schedule || []), ...(game.playoffBracket || [])]
-    .filter(g => g && g.played && (g.homeId === "team_stroud" || g.awayId === "team_stroud"));
-  return games[games.length - 1] || null;
-}
-
-function latestNewspaper() {
-  return (game.newspapers || [])[0] || null;
-}
-
-function buildSafeWatchEvents(finishedGame) {
-  if (finishedGame?.watchEvents?.length) return finishedGame.watchEvents;
 
 
-  const home = getTeam(finishedGame.homeId) || { name: "Home" };
-  const away = getTeam(finishedGame.awayId) || { name: "Away" };
-  const homeFinal = Number(finishedGame.homeScore || 0);
-  const awayFinal = Number(finishedGame.awayScore || 0);
-  const homeStats = finishedGame.stats?.home || {};
-  const awayStats = finishedGame.stats?.away || {};
-
-  const events = [];
-  let homeScore = 0;
-  let awayScore = 0;
-  let possession = finishedGame.homeId || "team_stroud";
-  let yard = 25;
-
-  function push(q, clock, title, text, big = false) {
-    const possTeam = getTeam(possession) || { name: "Team" };
-    events.push({
-      homeId: finishedGame.homeId,
-      awayId: finishedGame.awayId,
-      homeScore,
-      awayScore,
-      quarter: `Q${q}`,
-      clock,
-      downText: `${possTeam.name} ball • ${yardLabel(yard)}`,
-      fieldPct: clamp(yard, 2, 98),
-      title,
-      text,
-      big
-    });
-  }
-
-  const scores = [];
-  function queueScores(side, points) {
-    let left = points;
-    while (left >= 7) {
-      scores.push({ side, points: 7, label: "Touchdown!" });
-      left -= 7;
-    }
-    if (left >= 3) scores.push({ side, points: 3, label: "Field Goal" });
-    else if (left > 0) scores.push({ side, points: left, label: "Score" });
-  }
-
-  queueScores("home", homeFinal);
-  queueScores("away", awayFinal);
-
-  push(1, "12:00", "Kickoff", `${home.name} and ${away.name} are underway.`);
-
-  let scoreIndex = 0;
-  for (let q = 1; q <= 4; q++) {
-    for (let d = 0; d < 3; d++) {
-      const clock = `${String(rand(1, 11)).padStart(2, "0")}:${String(rand(0, 59)).padStart(2, "0")}`;
-      const shouldScore = scoreIndex < scores.length && (scoreIndex / Math.max(1, scores.length)) <= ((q - 1) * 3 + d + 1) / 12;
-
-      if (shouldScore) {
-        const score = scores[scoreIndex++];
-        possession = score.side === "home" ? finishedGame.homeId : finishedGame.awayId;
-        if (score.side === "home") homeScore += score.points;
-        else awayScore += score.points;
-        yard = score.points >= 7 ? rand(85, 99) : rand(65, 82);
-        push(q, clock, score.label, `${(getTeam(possession) || { name: "Team" }).name} puts points on the board.`, true);
-      } else {
-        const stats = possession === finishedGame.homeId ? homeStats : awayStats;
-        const total = Number(stats.totalYards || 0);
-        const gain = clamp(Math.round(total / 18 + rand(-6, 13)), -3, 35);
-        yard = possession === finishedGame.homeId ? clamp(yard + gain, 1, 99) : clamp(yard - gain, 1, 99);
-        if (gain >= 20) push(q, clock, "Big Gain", `${(getTeam(possession) || { name: "Team" }).name} flips the field.`, true);
-        else if (gain >= 7) push(q, clock, "First Down", `${(getTeam(possession) || { name: "Team" }).name} moves the chains.`);
-        else push(q, clock, "Drive Stalls", `${(getTeam(possession) || { name: "Team" }).name} punts it away.`);
-      }
-
-      possession = possession === finishedGame.homeId ? finishedGame.awayId : finishedGame.homeId;
-    }
-  }
-
-  while (scoreIndex < scores.length) {
-    const score = scores[scoreIndex++];
-    possession = score.side === "home" ? finishedGame.homeId : finishedGame.awayId;
-    if (score.side === "home") homeScore += score.points;
-    else awayScore += score.points;
-    yard = score.points >= 7 ? rand(85, 99) : rand(65, 82);
-    push(4, "0:45", score.label, `${(getTeam(possession) || { name: "Team" }).name} adds late points.`, true);
-  }
-
-  homeScore = homeFinal;
-  awayScore = awayFinal;
-  push(4, "0:00", "Final Whistle", `Final: ${home.name} ${homeFinal}, ${away.name} ${awayFinal}.`, true);
-
-  return events;
-}
-
-function watchGame() {
-  const scheduledGame = currentStroudScheduledGame();
-  if (!scheduledGame) {
-    toast("No Stroud game to watch this week.");
-    return;
-  }
-
-  const missing = validateDepthChartForGame();
-  if (missing.length) {
-    showDepthChartWarning(missing);
-    return;
-  }
-
-  try {
-    simulateGameForWatch(scheduledGame);
-    if (game.phase === "regular") {
-      game.week += 1;
-      if (game.week > 10) startPlayoffs();
-    } else if (game.phase === "playoffs") {
-      advancePlayoffBracketAfterGame?.(scheduledGame);
-    }
-
-    makeWeeklyPaper();
-    recalculateTeamRatings();
-    saveLocalSilent();
-
-    pendingWatchPaper = latestNewspaper();
-    watchedGameEvents = scheduledGame.watchEvents?.length ? scheduledGame.watchEvents : buildSafeWatchEvents(scheduledGame);
-    watchIndex = 0;
-    openWatchGameOverlay();
-    renderWatchFrame();
-    clearInterval(watchTimer);
-    watchTimer = setInterval(playNextWatchEvent, 850);
-    render();
-  } catch (error) {
-    console.error(error);
-    toast(`Watch game failed: ${error.message}`);
-  }
-}
 
 
-function closeWatchGameOverlay() {
-  clearInterval(watchTimer);
-  watchTimer = null;
-  document.getElementById("watchGameOverlay")?.classList.add("hidden");
-}
+
+
+
+
+
+
+
+
+
+
+
 
 function skipWatchedGame() {
   clearInterval(watchTimer);
   watchTimer = null;
-  finishWatchedGame();
-}
-
-function finishWatchedGame() {
-  clearInterval(watchTimer);
-  watchTimer = null;
-  closeWatchGameOverlay();
-  render();
-
-  if (pendingWatchPaper) {
-    openPaper(pendingWatchPaper.id);
-    pendingWatchPaper = null;
-  } else {
-    toast("Game completed.");
-  }
+  
 }
 
 
-function openWatchGameOverlay() {
-  const panel = document.getElementById("watchGamePanel");
-  panel.innerHTML = `
-    <div class="watch-head">
-      <div>
-        <div class="watch-title">Friday Night Live</div>
-        <div class="muted small">Drive-by-drive game viewer</div>
-      </div>
-      <div class="watch-controls">
-        <button id="watchSkipBtn" class="secondary">Skip to Final</button>
-        <button id="watchCloseBtn" class="secondary">Close</button>
-      </div>
-    </div>
-    <div class="watch-body" id="watchBody"></div>
-  `;
-  document.getElementById("watchGameOverlay").classList.remove("hidden");
-  document.getElementById("watchSkipBtn").addEventListener("click", skipWatchedGame);
-  document.getElementById("watchCloseBtn").addEventListener("click", closeWatchGameOverlay);
-}
 
-function playNextWatchEvent() {
-  if (watchIndex < watchedGameEvents.length - 1) {
-    watchIndex++;
-    renderWatchFrame();
-  } else {
-    clearInterval(watchTimer);
-    watchTimer = null;
-    renderWatchFrame(true);
-  }
-}
 
-function renderWatchFrame(done = false) {
-  const body = document.getElementById("watchBody");
-  if (!body) return;
 
-  const event = watchedGameEvents[watchIndex] || watchedGameEvents[0];
-  const visible = watchedGameEvents.slice(Math.max(0, watchIndex - 10), watchIndex + 1).reverse();
-  const homeTeam = getTeam(event.homeId) || { name: 'Home' };
-  const awayTeam = getTeam(event.awayId) || { name: 'Away' };
 
-  body.innerHTML = `
-    <div class="watch-scoreboard">
-      <div class="watch-team">${escapeHtml(homeTeam.name)}<br><span class="watch-score">${event.homeScore}</span></div>
-      <div class="watch-clock">
-        <strong>${escapeHtml(event.quarter)}</strong><br>
-        ${escapeHtml(event.clock)}<br>
-        ${escapeHtml(event.downText)}
-      </div>
-      <div class="watch-team away">${escapeHtml(awayTeam.name)}<br><span class="watch-score">${event.awayScore}</span></div>
-    </div>
 
-    <div class="watch-field">
-      <div class="watch-yard-labels"><span>0</span><span>20</span><span>40</span><span>50</span><span>40</span><span>20</span><span>0</span></div>
-      <div class="watch-ball" style="left:${event.fieldPct}%"></div>
-    </div>
 
-    <div class="watch-drive">
-      <div class="watch-card">
-        <div class="watch-play-main ${event.big ? "watch-big" : ""}">${escapeHtml(event.title)}</div>
-        <div class="watch-play-sub">${escapeHtml(event.text)}</div>
-        ${done ? `
-          <div class="watch-final-actions">
-            <button id="finishWatchBtn" class="gold">Continue to Final</button>
-            <button id="viewCurrentPaperBtn" class="secondary">Skip Paper</button>
-          </div>
-        ` : ""}
-      </div>
-      <div class="watch-card watch-log">
-        ${visible.map(item => `
-          <div class="watch-log-line">
-            <strong>${escapeHtml(item.quarter)} ${escapeHtml(item.clock)}</strong><br>
-            ${item.big ? "<span class='watch-big'>★ </span>" : ""}${escapeHtml(item.title)}
-          </div>
-        `).join("")}
-      </div>
-    </div>
-  `;
 
-  document.getElementById("finishWatchBtn")?.addEventListener("click", finishWatchedGame);
-  document.getElementById("viewCurrentPaperBtn")?.addEventListener("click", closeWatchGameOverlay);
-}
 
 
 function findMostRecentStroudGame(previousPhase, previousWeek) {
@@ -1571,179 +1327,9 @@ function findMostRecentStroudGame(previousPhase, previousWeek) {
   return stroudGames[stroudGames.length - 1];
 }
 
-function buildWatchedGameEventsFromResult(scheduledGame) {
-  const home = getTeam(scheduledGame.homeId);
-  const away = getTeam(scheduledGame.awayId);
-  const homeFinal = Number(scheduledGame.homeScore || 0);
-  const awayFinal = Number(scheduledGame.awayScore || 0);
-  const homeStats = scheduledGame.stats?.home || { passYards: 0, rushYards: 0, turnovers: 0 };
-  const awayStats = scheduledGame.stats?.away || { passYards: 0, rushYards: 0, turnovers: 0 };
 
-  const events = [];
-  let homeScore = 0;
-  let awayScore = 0;
-  let yard = 25;
-  let possession = scheduledGame.homeId;
-  const totalPoints = homeFinal + awayFinal;
-  const scoringEvents = [];
 
-  function addScoringEvents(teamSide, finalScore) {
-    let remaining = finalScore;
-    while (remaining >= 7) {
-      scoringEvents.push({ side: teamSide, points: 7, title: "Touchdown!" });
-      remaining -= 7;
-    }
-    if (remaining >= 3) scoringEvents.push({ side: teamSide, points: 3, title: "Field Goal" });
-    else if (remaining > 0) scoringEvents.push({ side: teamSide, points: remaining, title: "Score" });
-  }
 
-  addScoringEvents("home", homeFinal);
-  addScoringEvents("away", awayFinal);
-  scoringEvents.sort(() => Math.random() - 0.5);
-
-  function eventPush(q, clock, title, text, big = false) {
-    events.push({
-      homeId: scheduledGame.homeId,
-      awayId: scheduledGame.awayId,
-      homeScore,
-      awayScore,
-      quarter: `Q${q}`,
-      clock,
-      downText: `${getTeam(possession)?.name || "Team"} ball • ${yardLabel(yard)}`,
-      fieldPct: clamp(yard, 2, 98),
-      title,
-      text,
-      big
-    });
-  }
-
-  eventPush(1, "12:00", "Kickoff", `${home.name} and ${away.name} are underway under the lights.`);
-
-  let scoringIndex = 0;
-  for (let q = 1; q <= 4; q++) {
-    for (let drive = 0; drive < 4; drive++) {
-      const clock = `${String(rand(1, 11)).padStart(2, "0")}:${String(rand(0, 59)).padStart(2, "0")}`;
-      const isHomePoss = possession === scheduledGame.homeId;
-      const stats = isHomePoss ? homeStats : awayStats;
-      const team = isHomePoss ? home : away;
-      const yards = Math.max(0, Number(stats.passYards || 0) + Number(stats.rushYards || 0));
-      const playText = possession === "team_stroud" ? stroudPlayName() : opponentPlayName(team);
-
-      const shouldScore = scoringIndex < scoringEvents.length && Math.random() < 0.38;
-      if (shouldScore) {
-        const score = scoringEvents[scoringIndex++];
-        possession = score.side === "home" ? scheduledGame.homeId : scheduledGame.awayId;
-        if (score.side === "home") homeScore += score.points;
-        else awayScore += score.points;
-        yard = score.points === 3 ? rand(65, 82) : rand(88, 99);
-        eventPush(q, clock, score.title, `${getTeam(possession).name} finishes the drive for ${score.points} points.`, true);
-      } else {
-        const gain = clamp(Math.round(yards / 9 + rand(-8, 14)), -4, 42);
-        yard = isHomePoss ? clamp(yard + gain, 1, 99) : clamp(yard - gain, 1, 99);
-        if (gain >= 25) eventPush(q, clock, "Big Gain", `${playText} breaks loose for ${gain} yards.`, true);
-        else if (gain >= 8) eventPush(q, clock, "First Down", `${playText} keeps the chains moving.`);
-        else eventPush(q, clock, "Drive Stalls", `${team.name} punts it away.`);
-      }
-
-      possession = possession === scheduledGame.homeId ? scheduledGame.awayId : scheduledGame.homeId;
-    }
-  }
-
-  while (scoringIndex < scoringEvents.length) {
-    const score = scoringEvents[scoringIndex++];
-    possession = score.side === "home" ? scheduledGame.homeId : scheduledGame.awayId;
-    if (score.side === "home") homeScore += score.points;
-    else awayScore += score.points;
-    yard = score.points === 3 ? rand(65, 82) : rand(88, 99);
-    eventPush(4, "0:30", score.title, `${getTeam(possession).name} adds late points.`, true);
-  }
-
-  homeScore = homeFinal;
-  awayScore = awayFinal;
-  eventPush(4, "0:00", "Final Whistle", `Final: ${home.name} ${homeFinal}, ${away.name} ${awayFinal}.`, true);
-
-  return events;
-}
-
-function buildWatchedGameEvents() {
-  const scheduledGame = getCurrentStroudGameForWatch();
-  const home = getTeam(scheduledGame.homeId);
-  const away = getTeam(scheduledGame.awayId);
-  const stroudIsHome = scheduledGame.homeId === "team_stroud";
-  const stroud = getTeam("team_stroud");
-  const opponent = stroudIsHome ? away : home;
-
-  const stroudEdge = (stroud.power - opponent.power) / 18;
-  const events = [];
-  let homeScore = 0;
-  let awayScore = 0;
-  let yard = 25;
-  let possession = Math.random() < 0.5 ? scheduledGame.homeId : scheduledGame.awayId;
-
-  function pushEvent(q, clock, title, text, big = false) {
-    events.push({
-      homeId: scheduledGame.homeId,
-      awayId: scheduledGame.awayId,
-      homeScore,
-      awayScore,
-      quarter: `Q${q}`,
-      clock,
-      downText: `${getTeam(possession).name} ball • ${yardLabel(yard)}`,
-      fieldPct: clamp(yard, 2, 98),
-      title,
-      text,
-      big
-    });
-  }
-
-  pushEvent(1, "12:00", "Kickoff", `${home.name} and ${away.name} are underway under the lights.`);
-
-  for (let q = 1; q <= 4; q++) {
-    for (let drive = 0; drive < 4; drive++) {
-      const clock = `${String(rand(1, 11)).padStart(2, "0")}:${String(rand(0, 59)).padStart(2, "0")}`;
-      const offenseIsStroud = possession === "team_stroud";
-      const edge = offenseIsStroud ? stroudEdge : -stroudEdge;
-      const driveQuality = rand(-18, 18) + edge * 10;
-      const startYard = rand(18, 36);
-      yard = possession === scheduledGame.homeId ? startYard : 100 - startYard;
-
-      const playName = offenseIsStroud ? stroudPlayName() : opponentPlayName(opponent);
-      const gained = clamp(Math.round(25 + driveQuality + rand(-12, 28)), -5, 76);
-      const turnover = Math.random() < (driveQuality < -8 ? 0.18 : 0.08);
-      const scoreChance = gained > 52 || driveQuality > 20 || Math.random() < 0.16 + edge * 0.05;
-
-      if (turnover) {
-        const defender = choice(DEFENSE_POSITIONS.map(pos => getPlayer(game.depth.defense[pos]?.[0])).filter(Boolean));
-        pushEvent(q, clock, "Turnover!", offenseIsStroud
-          ? `${opponent.name} forces a takeaway and flips the field.`
-          : `${defender?.name || "The Tigers defense"} comes up with a huge takeaway.`, true);
-        possession = possession === scheduledGame.homeId ? scheduledGame.awayId : scheduledGame.homeId;
-        continue;
-      }
-
-      yard = possession === scheduledGame.homeId ? clamp(yard + gained, 1, 99) : clamp(yard - gained, 1, 99);
-
-      if (scoreChance) {
-        const td = Math.random() < 0.78;
-        const points = td ? 7 : 3;
-        if (possession === scheduledGame.homeId) homeScore += points;
-        else awayScore += points;
-        pushEvent(q, clock, td ? "Touchdown!" : "Field Goal", `${playName} finishes the drive for ${points} points.`, true);
-      } else if (gained > 28) {
-        pushEvent(q, clock, "Big Gain", `${playName} breaks loose for ${gained} yards and changes field position.`, true);
-      } else if (gained > 8) {
-        pushEvent(q, clock, "First Down", `${playName} keeps the chains moving.`);
-      } else {
-        pushEvent(q, clock, "Drive Stalls", `${getTeam(possession).name} cannot finish the drive and punts it away.`);
-      }
-
-      possession = possession === scheduledGame.homeId ? scheduledGame.awayId : scheduledGame.homeId;
-    }
-  }
-
-  pushEvent(4, "0:00", "Final Whistle", "The last seconds run off. Time to check the final report.", true);
-  return events;
-}
 
 function getCurrentStroudGameForWatch() {
   if (game.phase === "regular") {
@@ -5486,7 +5072,6 @@ bindClick("guestSignInBtn", async () => {
 bindClick("newDynastyBtn", confirmNewDynasty);
 bindClick("topNewDynastyBtn", confirmNewDynasty);
 bindClick("advanceWeekBtn", advanceWeek);
-bindClick("watchGameBtn", watchGame);
 bindClick("startNextSeasonBtn", advanceToNextSeason);
 
 bindClick("topSaveLocalBtn", saveLocal);
@@ -5562,16 +5147,6 @@ if (importFileInput) {
 }
 
 
-
-
-document.addEventListener("click", event => {
-  const watchButton = event.target.closest?.("#watchGameBtn");
-  if (watchButton) {
-    event.preventDefault();
-    event.stopPropagation();
-    watchGame();
-  }
-});
 
 
 document.addEventListener("click", event => {
