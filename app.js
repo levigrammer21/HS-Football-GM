@@ -1,6 +1,6 @@
 
 "use strict";
-const BUILD_VERSION = "v0.0.25-alpha";
+const BUILD_VERSION = "v0.0.26-alpha";
 const BUILD_DATE = "2026-06-12";
 
 function reportFatalError(error) {
@@ -1310,9 +1310,26 @@ function skipWatchedGame() {
 
 function finishWatchedGame() {
   closeWatchGameOverlay();
-  if (pendingWatchedAdvance) {
-    pendingWatchedAdvance = false;
-    advanceWeek(true);
+
+  if (!pendingWatchedAdvance) return;
+  pendingWatchedAdvance = false;
+
+  try {
+    if (game.phase === "regular") {
+      runRegularWeek();
+    } else if (game.phase === "playoffs") {
+      runPlayoffRound();
+    } else {
+      advanceWeek();
+      return;
+    }
+
+    saveLocalSilent();
+    render();
+    showFinalResultThenPaper();
+  } catch (error) {
+    console.error(error);
+    toast(`Watch game finish failed: ${error.message}`);
   }
 }
 
@@ -3278,7 +3295,7 @@ function renderRoster() {
           <tbody>
             ${sorted.map(player => `
               <tr data-player-id="${player.id}">
-                <td><span class="player-name">${escapeHtml(player.name)}</span></td>
+                <td><span class="player-name" data-player-id="${player.id}">${escapeHtml(player.name)}</span></td>
                 <td>${playerStatusPill(player.id)}</td>
                 <td>${escapeHtml(rolePositionOnly(player.id, "offense"))}</td>
                 <td>${escapeHtml(rolePositionOnly(player.id, "defense"))}</td>
@@ -3967,7 +3984,7 @@ function playerCardIntro(player) {
 function openPlayerCard(playerId) {
   try {
   const player = getPlayer(playerId);
-  if (!player) return;
+  if (!player) { toast("Player not found."); return; }
 
   const traitLine = (label, trait) => {
     const knowledge = player.knowledge[trait];
@@ -4557,6 +4574,19 @@ document.addEventListener("click", event => {
     event.stopPropagation();
     watchGame();
   }
+});
+
+
+document.addEventListener("click", event => {
+  const playerNode = event.target.closest?.("[data-player-id]");
+  if (!playerNode) return;
+
+  const playerId = Number(playerNode.dataset.playerId);
+  if (!Number.isFinite(playerId)) return;
+
+  event.preventDefault();
+  event.stopPropagation();
+  openPlayerCard(playerId);
 });
 
 /* -------------------------------- Startup -------------------------------- */
