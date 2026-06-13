@@ -1635,3 +1635,6 @@ tr:hover td {
 .page-action-row:empty {
   display: none;
 }
+
+/* v40: stable advance-only sim */
+#watchGameBtn { display:none !important; }
